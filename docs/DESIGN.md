@@ -373,3 +373,32 @@ SIM implementation notes (`src/game/shot.js` `computeHit`):
   Scatter ∝ (1 − q); below q ≈ 0.68 mishits occur with rising probability: `mishit` ∈ 'frame' (wild direction, low pace),
   'floater' (short, high, slow), 'net', 'long'. Reported in the `hit` event (`quality`, `mishit`) and in `state.lastShot`.
 
+
+---
+
+## 7. v4 contracts (contact-dependent strokes, player archetypes, game speed, competitiveness)
+
+### 7.1 Contact geometry for stroke animation (SIM writes, CHAR renders)
+During `anim.name === 'swing'` (and from the start of the backswing when the contact is planned), SIM writes:
+```
+anim.contact = { lat, fwd, h }   // ball position at (planned) contact in the player's local frame, metres:
+                                 //   lat: sideways from the body centre, + = toward the stroke's hitting side (fh: racket-arm side, bh: other side)
+                                 //   fwd: + = in front of the body (toward the net)
+                                 //   h:   height above the court
+anim.variant = 'normal' | 'stretch' | 'jammed' | 'run' | 'high' | 'low' | 'defensive'
+anim.reachT  = 0..1              // 0 = comfortable, 1 = at the absolute limit of reach (lunge)
+```
+CHAR uses IK so the racket's sweet spot meets `contact` at phase 0.5, and adapts the whole body per variant
+(stretch: open-stance lunge / slide, arm fully extended; jammed: elbow tucked, short swing, step away; run: hitting on the move;
+high: shoulder-height take-back; low: deep knee bend; defensive: blocked/sliced reply).
+
+### 7.2 Player archetypes (`look.archetype`, CHAR defines, VIS exposes in menu, SIM passes through)
+`'elastic'` — lean, very flexible all-court defender: wide low stance, splits/slides, compact flat-ish forehand, signature two-handed backhand with full extension.
+`'lanky'` — tall, long-limbed aggressive baseliner: upright posture, long levers, early take-back, flat penetrating strokes, open stance.
+`'classic'` — current default build.
+(Inspired by the playing styles of top professionals; **no real names, likenesses-by-name, logos or brand marks in the game**.)
+`look.archetype` also scales SIM tunables slightly (e.g. reach +5 % for 'lanky', slide-recovery for 'elastic').
+
+### 7.3 Game speed
+`new Simulation({ timeScale })`, default **0.85**, menu option 0.7–1.0. `sim.step(realDt)` advances sim time by `realDt × timeScale`.
+Displayed speeds stay real-world (km/h unchanged). Remote `ageMs` (real time) is converted to sim time inside SIM.
