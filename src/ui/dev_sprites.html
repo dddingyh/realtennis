@@ -1,0 +1,35 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#3a7a5a">
+<canvas id="c" width="1400" height="760"></canvas>
+<script type="module">
+import { SpriteFactory } from '../render/sprites.js';
+const q = new URLSearchParams(location.search);
+const role = q.get('role') || 'near';
+const s = +(q.get('s') || (role === 'near' ? 38 : 19));
+const set = q.get('set') || 'swing';
+const hand = q.get('hand') || 'R';
+const look = { skin: '#e0a97c', hair: '#2a1d12', shirt: role === 'near' ? '#e23d3d' : '#f2c230', shorts: '#243a6a', shoes: '#f0f0f0', headband: role==='near' ? null : '#ffffff' };
+const f = new SpriteFactory();
+const c = document.getElementById('c'), g = c.getContext('2d');
+g.imageSmoothingEnabled = false;
+const items = [];
+const sw = (shot, side) => { for (let i = 0; i <= 8; i++) items.push({ name: 'swing', shot, side, phase: i / 8 }); };
+if (set === 'swing') { sw('topspin','fh'); sw('topspin','bh'); sw('slice','fh'); sw('volley','fh'); sw('smash','fh'); sw('lob','bh'); }
+if (set === 'serve') { for (let i = 0; i <= 10; i++) items.push({ name:'serve', phase: i/10 }); for (const n of ['ready','split','idle','celebrate','dejected','walk']) items.push({name:n, phase:0}); }
+if (set === 'run') { for (const [x,z] of [[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]]) for (let k=0;k<2;k++) items.push({name:'run', dir:{x:x/Math.hypot(x,z),z:z/Math.hypot(x,z)}, speed:0.9, _rp:k*0.25}); }
+const Z = +(q.get('z') || 1);
+if (q.get('a')) { const a=+q.get('a'), b=+q.get('b'); items.splice(0, items.length, ...items.slice(a, b)); }
+const cw = Math.round(2.0 * s * Z * 1.0), chh = Math.round(3.3 * s * Z * 0.62);
+let x = 0, y = 0;
+const cols = Math.floor(1400 / cw);
+const t0 = performance.now();
+items.forEach((a, i) => {
+  const pl = { hand, look, anim: a, vel: { x: 0, z: 0 } };
+  if (a._rp !== undefined) f.runPhase[0] = a._rp;
+  const fr = f.get(0, pl, role, s, 0.3);
+  const col = i % cols, row = Math.floor(i / cols);
+  const ox = col * cw + cw / 2, oy = row * (chh) + chh - 6;
+  g.drawImage(fr.canvas, 0, 0, fr.canvas.width, fr.canvas.height, Math.round(ox - fr.ax * Z), Math.round(oy - fr.ay * Z), fr.canvas.width * Z, fr.canvas.height * Z);
+  g.fillStyle = 'rgba(255,255,255,.4)'; g.fillRect(ox - 1, oy - 1, 3, 3);
+});
+window.__done = performance.now() - t0;
+</script>

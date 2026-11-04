@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>真实网球 · Real Tennis</title>
+<meta name="description" content="像素风网球：真实物理、多种对手风格，可用手机体感挥拍。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Crect width='8' height='8' fill='%23244a8a'/%3E%3Crect x='2' y='2' width='4' height='4' fill='%23d9f23a'/%3E%3Crect x='1' y='3' width='1' height='2' fill='%23d9f23a'/%3E%3Crect x='6' y='3' width='1' height='2' fill='%23d9f23a'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/style.css">
+<script src="vendor/qrcode.js"></script>
+<script src="vendor/peerjs.min.js"></script>
+</head>
+<body>
+<div id="stage">
+  <canvas id="screen" width="640" height="360"></canvas>
+  <div id="loading" class="overlay"><div class="loading-box">LOADING<span id="loadbar"><i></i></span></div></div>
+
+  <div id="menu" class="overlay hidden" role="dialog" aria-label="主菜单">
+    <div class="panel menu-panel">
+      <header class="title">
+        <div class="logo"><span class="ball"></span><h1>真实网球</h1><span class="sub">REAL TENNIS</span></div>
+        <div class="tagline">像素风网球 · 真实物理 · 手机体感挥拍</div>
+      </header>
+      <div class="menu-grid">
+        <section class="col">
+          <h2>对手风格</h2>
+          <div id="opt-style" class="cards"></div>
+          <h2>难度 <b id="lv-label" class="val"></b></h2>
+          <div class="slider-row"><input id="opt-level" type="range" min="1" max="10" step="1" value="5"><span id="lv-val" class="val">5</span></div>
+          <h2>场地</h2>
+          <div id="opt-surface" class="seg"></div>
+          <h2>赛制</h2>
+          <div id="opt-format" class="seg"></div>
+        </section>
+        <section class="col">
+          <h2>控制方式</h2>
+          <div id="opt-control" class="seg"></div>
+          <div id="phone-panel" class="phone hidden">
+            <div class="qr-wrap"><canvas id="qr" width="140" height="140"></canvas><div id="qr-fallback" class="qr-fallback hidden">二维码不可用</div></div>
+            <div class="phone-info">
+              <div class="room-label">房间码</div>
+              <div id="room-code" class="room-code">------</div>
+              <div id="phone-status" class="status waiting"><i></i><span>准备中…</span></div>
+              <div class="hint small">用手机相机扫码，或在手机浏览器打开：</div>
+              <div id="phone-url" class="url small"></div>
+              <div class="hint small">手机端需 HTTPS（GitHub Pages 即可）。倾斜手机移动，挥动手机击球。</div>
+            </div>
+          </div>
+          <div id="kb-help" class="kb"></div>
+          <h2>惯用手</h2>
+          <div id="opt-hand" class="seg"></div>
+          <h2>自动跑位</h2>
+          <div id="opt-auto" class="seg"></div>
+          <h2>时序偏移 <b id="off-val" class="val">0 ms</b></h2>
+          <div class="slider-row"><input id="opt-offset" type="range" min="-150" max="150" step="5" value="0"><button id="off-reset" class="mini" type="button">归零</button></div>
+          <div class="hint small">手机延迟较大时调整：正值=判定击球更晚。</div>
+          <h2>声音</h2>
+          <div class="seg"><button id="opt-sound" type="button" class="on">音效 开</button><button id="opt-speech" type="button">裁判报分 (英文) 关</button></div>
+        </section>
+      </div>
+      <footer class="menu-foot"><button id="btn-start" class="big" type="button">开始比赛</button></footer>
+    </div>
+  </div>
+
+  <div id="pause" class="overlay hidden" role="dialog" aria-label="暂停">
+    <div class="panel small-panel">
+      <h1>暂停</h1>
+      <div class="btns"><button id="btn-resume" class="big" type="button">继续</button><button id="btn-restart" type="button">重新开始</button><button id="btn-tomenu" type="button">返回菜单</button></div>
+      <div id="pause-help" class="hint small">按 P / Esc 继续</div>
+    </div>
+  </div>
+
+  <div id="end" class="overlay hidden" role="dialog" aria-label="比赛结束">
+    <div class="panel end-panel">
+      <h1 id="end-title">比赛结束</h1>
+      <div id="end-score" class="end-score"></div>
+      <table id="end-stats" class="stats"></table>
+      <div class="btns"><button id="btn-again" class="big" type="button">再来一局</button><button id="btn-endmenu" type="button">返回菜单</button></div>
+    </div>
+  </div>
+  <div id="toast" class="toast hidden"></div>
+</div>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<canvas id="c" width="640" height="360"></canvas>
+<script type="module">
+import { renderBackground } from '../render/court.js';
+const q = new URLSearchParams(location.search);
+const t0 = performance.now();
+const pb = renderBackground(q.get('s') || 'hard');
+document.getElementById('c').getContext('2d').drawImage(pb.flush(), 0, 0);
+window.__done = performance.now() - t0;
+</script>

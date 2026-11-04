@@ -1,0 +1,16 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<canvas id="c" width="640" height="360"></canvas>
+<script type="module">
+import { Renderer } from '../render/renderer.js';
+import { Simulation } from './dev_stub_sim.js';
+const q = new URLSearchParams(location.search);
+const r = new Renderer(); r.setSurface(q.get('s') || 'hard');
+const sim = new Simulation({ surface: q.get('s') || 'hard' });
+const T = +(q.get('t') || 5);
+let time = 0; const dt = 1 / 120;
+let c = null;
+for (let i = 0; i < T * 120; i++) { sim.step(dt); time += dt; if (i % 2 === 0) { const ev = sim.drainEvents(); r.onEvents(ev, sim.state); if (i % 4 === 0) c = r.draw(sim.state, 1 / 30, time); } }
+c = r.draw(sim.state, 1/60, time);
+document.getElementById('c').getContext('2d').drawImage(c, 0, 0);
+window.__done = JSON.stringify(sim.state.players.map(p => p.anim.name + ':' + (p.anim.shot||'')+':'+p.anim.phase.toFixed(2)));
+</script>

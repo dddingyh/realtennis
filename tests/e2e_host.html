@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>e2e host</title>
+<style>body{font:14px system-ui;background:#111;color:#ddd;padding:12px}#log{white-space:pre;font:12px monospace;max-height:300px;overflow:auto}canvas{background:#fff}</style></head>
+<body>
+<h3>E2E host (local transport)</h3>
+<div>room: <b id="room"></b> <span id="status"></span></div>
+<canvas id="qr"></canvas>
+<div id="url"></div>
+<div id="log"></div>
+<script type="module">
+import { createRemoteHost, drawQR } from '../src/net/host.js';
+import { RemoteInput } from '../src/input/remote.js';
+const q = new URLSearchParams(location.search);
+const msgs = []; const stats = [];
+// mock simulation recording what the game would receive
+const simCalls = [];
+const sim = { state: { match: { phase: 'rally', pointText: '15-0', server: 0 } },
+  setMove: (i, x, z) => simCalls.push(['move', i, x, z]), swing: (i, o) => simCalls.push(['swing', i, o]), pause: (b) => simCalls.push(['pause', b]) };
+const host = createRemoteHost({
+  local: q.get('local') !== '0',
+  controllerBase: new URL('../controller.html', location.href).href,
+  onMessage: (m) => { msgs.push(m); if (m.t !== 'tilt') document.getElementById('log').textContent += JSON.stringify(m) + '\n'; remote.handle(m); },
+  onStatus: (s) => { stats.push(s); document.getElementById('status').textContent = s.state + (s.rttMs != null ? ' ' + s.rttMs + 'ms' : ''); },
+});
+const remote = new RemoteInput(sim, 0, host);
+document.getElementById('room').textContent = host.roomCode;
+document.getElementById('url').textContent = host.controllerUrl;
+drawQR(document.getElementById('qr'), host.controllerUrl + '&sim=1', 3).catch((e) => { document.getElementById('log').textContent += 'QR failed ' + e + '\n'; });
+window.__host = host; window.__msgs = msgs; window.__stats = stats; window.__sim = sim; window.__simCalls = simCalls; window.__remote = remote;
+</script></body></html>
