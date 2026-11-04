@@ -95,7 +95,11 @@ export class Player {
     this.prepared = null;
     this.cooldown = 0.32;
     this.stamina = Math.max(0, this.stamina - 0.004);
+    this.syncAnim();
   }
+
+  /** Recompute `anim` immediately (used right after an input-driven state change). */
+  syncAnim() { this._animate(Math.hypot(this.vel.x, this.vel.z), this._ctx || {}); }
 
   /**
    * Advance kinematics and animation.
@@ -157,6 +161,7 @@ export class Player {
       else if (sp < 1.5) this.stamina += PLAYER.staminaRecover * 0.5 * dt;
     } else this.stamina += PLAYER.staminaRecover * (sp < 3 ? 1 : 0.4) * dt;
     this.stamina = Math.min(1, Math.max(0, this.stamina));
+    this._ctx = ctx;
     this._animate(sp, ctx);
   }
 

@@ -2,7 +2,7 @@
 import { COURT } from '../config.js';
 import { camera } from './camera.js';
 import { PixBuf, hex, rgba, shade, mix } from './raster.js';
-import { STAGE } from './stage.js';
+import { STAGE, THEMES } from './stage.js';
 
 const W = camera.W, H = camera.H;
 const POST_X = COURT.doublesHalfWidth + 0.914; // 6.399
@@ -17,7 +17,8 @@ export function netTopAt(x) {
 function fillPoly(pb, pts, c) { pb.poly(pts.map((p) => [p.sx, p.sy]), c); }
 const P = (x, y, z) => camera.project(x, y, z);
 
-export function renderNetLayer() {
+export function renderNetLayer(surface = 'hard') {
+  const TH = THEMES[surface] || THEMES.hard;
   const pb = new PixBuf(W, H);
   const left = P(-POST_X, 0, 0), right = P(POST_X, 0, 0);
   const x0 = Math.floor(left.sx) - 4, x1 = Math.ceil(right.sx) + 4;
@@ -68,25 +69,26 @@ export function renderNetLayer() {
     pb.rect(xs, ys, w, ye - ys + 1, hex('#2c3240'));
     pb.rect(xs, ys, 1, ye - ys + 1, hex('#5d6a82'));
     pb.rect(xs + w - 1, ys, 1, ye - ys + 1, hex('#161a22'));
+    pb.rect(xs, ys + 2, w, 2, hex(TH.wallLite));
     pb.rect(xs - 1, ys - 1, w + 2, 2, hex('#3b4354'));
     pb.rect(xs, ys - 1, w, 1, hex('#6f7c96'));
     // net strap anchor
     pb.rect(xs + (sgn > 0 ? -1 : w), Math.round(P(gx, NET_TOP_P - 0.03, 0).sy), 1, 2, hex('#f6f6f0'));
     // foot shadow on court
   }
-  drawUmpireChair(pb);
+  drawUmpireChair(pb, TH);
   return pb;
 }
 
 function darken(pb, x, y, f) { const c = pb.get(x, y); if (c) pb.set(x, y, shade(c, f)); }
 
-function drawUmpireChair(pb) {
+function drawUmpireChair(pb, TH) {
   const cx = 7.75;
   const k = P(cx, 0, 0).scale;
   const m = (v) => Math.round(v * k);
   const base = P(cx, 0, 0);
   const bx = Math.round(base.sx), by = Math.round(base.sy);
-  const FRAME = hex('#2d3a58'), FR_L = hex('#4b5f8a'), FR_D = hex('#1a2238');
+  const FRAME = hex(TH.wall), FR_L = hex(TH.wallLite), FR_D = shade(hex(TH.wall), 0.6);
   const seatY = m(1.75);
   // ground shadow
   for (let j = 0; j < 4; j++) pb.rect(bx - m(0.6) + j * 2, by + j - 1, m(1.3), 1, rgba(0, 0, 0, 70));
@@ -106,7 +108,7 @@ function drawUmpireChair(pb) {
   pb.rect(bx - m(0.62), by - seatY - 1, m(1.34), 3, hex('#e2e6ee'));
   pb.rect(bx - m(0.62), by - seatY + 2, m(1.34), 1, FR_D);
   // backrest (right side, away from net)
-  pb.rect(bx + m(0.46), by - seatY - m(0.8), m(0.18), m(0.8), hex('#26304c'));
+  pb.rect(bx + m(0.46), by - seatY - m(0.8), m(0.18), m(0.8), hex(TH.wall));
   pb.rect(bx + m(0.46), by - seatY - m(0.8), 1, m(0.8), FR_L);
   // desk / scoreboard in front (left)
   pb.rect(bx - m(0.72), by - seatY - m(0.38), m(0.22), m(0.38), hex('#1d2742'));
@@ -169,22 +171,46 @@ function person(pb, wx, wz, opts) {
   }
 }
 
-export function drawStaticPeople(pb) {
-  const J = { shirt: '#f2f2ea', shorts: '#243050', skin: '#e0a97c', hair: '#2a1d12', seated: true, hat: '#f2f2ea' };
+function box(pb, x, y, z, w, h, d, c) {
+  // simple shaded block standing on the court: front face + top
+  const f = P(x, y, z), g = P(x + w, y + h, z), t = P(x, y + h, z - d);
+  const x0 = Math.round(f.sx), x1 = Math.round(P(x + w, 0, z).sx), yb = Math.round(f.sy), yt = Math.round(g.sy);
+  pb.rect(x0, yt, x1 - x0, yb - yt, c);
+  pb.rect(x0, yt, x1 - x0, 1, shade(c, 1.3));
+  pb.rect(x1 - 1, yt, 1, yb - yt, shade(c, 0.7));
+  pb.rect(x0, yb - 1, x1 - x0, 1, shade(c, 0.6));
+}
+function bench(pb, x, z, TH) {
+  const wall = hex(TH.wall);
+  const q = P(x, 0, z), k = q.scale, m = (v) => Math.max(1, Math.round(v * k));
+  pb.ellipse(Math.round(q.sx + m(0.4)), Math.round(q.sy), m(1.0), Math.max(1, m(0.1)), rgba(0, 0, 0, 70), true);
+  const bx = Math.round(q.sx - m(0.8)), by = Math.round(q.sy);
+  pb.rect(bx, by - m(0.45), m(1.6), m(0.1), hex('#d8dce4'));            // seat
+  pb.rect(bx + 1, by - m(0.35), 2, m(0.35), hex('#2a2f3a')); pb.rect(bx + m(1.6) - 3, by - m(0.35), 2, m(0.35), hex('#2a2f3a'));
+  pb.rect(bx, by - m(0.95), m(1.6), m(0.5), wall);                       // back
+  pb.rect(bx, by - m(0.95), m(1.6), 1, hex(TH.wallLite));
+  // towel box
+  const tb = bx + m(1.75);
+  pb.rect(tb, by - m(0.5), m(0.45), m(0.5), shade(wall, 0.8)); pb.rect(tb, by - m(0.5), m(0.45), 1, hex(TH.wallLite));
+  pb.rect(tb + 1, by - m(0.62), m(0.45) - 2, m(0.12), hex('#f2f2ea'));
+}
+export function drawStaticPeople(pb, surface = 'hard') {
+  const TH = THEMES[surface] || THEMES.hard;
+  const J = { shirt: '#f2f2ea', shorts: '#1b2438', skin: '#e0a97c', hair: '#2a1d12', seated: true, hat: '#f2f2ea' };
   const { ZB } = STAGE;
-  // far-side line judges (seated against the boards / by the corners)
   person(pb, 0.0, -ZB + 1.0, { ...J, skin: '#f1c9a5' });
   person(pb, -7.3, -ZB + 1.0, { ...J, skin: '#c98a5b', hair: '#111' });
   person(pb, 7.3, -ZB + 1.0, { ...J, skin: '#e0a97c' });
   person(pb, -7.2, -4.2, { ...J, skin: '#9a6038', hair: '#111' });
   person(pb, 7.2, -4.0, { ...J, skin: '#f1c9a5', hair: '#6b4423' });
-  // near-side judges
   person(pb, -10.3, 7.0, { ...J, skin: '#e0a97c' });
   person(pb, 10.3, 7.0, { ...J, skin: '#f7dcc2', hair: '#a33a1e' });
-  // ball kids
-  const K = { shirt: '#26a69a', shorts: '#1c2a46', skin: '#e0a97c', hair: '#3b2415', crouch: true };
+  const K = { shirt: TH.wallLite, shorts: '#1c2236', skin: '#e0a97c', hair: '#3b2415', crouch: true };
   person(pb, -7.0, -17.2, { ...K });
   person(pb, 7.0, -17.2, { ...K, skin: '#c98a5b' });
   person(pb, -6.6, -0.8, { ...K, skin: '#f1c9a5', hair: '#c8a24a' });
   person(pb, 6.6, -1.2, { ...K, skin: '#9a6038', hair: '#111' });
+  // benches with towel boxes on the umpire-opposite side, net-cord sensor
+  bench(pb, -8.6, 3.2, TH); bench(pb, -8.6, 7.4, TH);
+  box(pb, 6.25, 0, 0.35, 0.22, 0.18, 0.2, hex('#2a303c'));
 }

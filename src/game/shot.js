@@ -125,24 +125,31 @@ export function solveLaunch(spec) {
     return { speed, el: hi };
   };
 
-  let speed = spec.speed, rot = 0, sol, out;
-  for (let attempt = 0; attempt < 9; attempt++) {
+  let speed = spec.speed, rot = 0, sol, out, topNow = top;
+  let slowSteps = 0;
+  for (let attempt = 0; attempt < 40; attempt++) {
     for (let it = 0; it < 3; it++) {
       sol = solveOnce(speed, rot);
-      out = runShot(pos, sol.speed, sol.el, rot, h0x, h0z, top, side, surface);
+      if (sol.unreachable) break;
+      out = runShot(pos, sol.speed, sol.el, rot, h0x, h0z, topNow, side, surface);
       if (!out.r.landing) break;
       const E = (out.r.landing.x - pos.x) * px + (out.r.landing.z - pos.z) * pz;
       if (Math.abs(E) < 0.04) break;
       rot -= E / Math.max(along(out.r.landing), 3);
     }
+    if (sol.unreachable) {                           // not enough pace/too much dip to reach the target: hit harder, spin less
+      speed *= 1.1; topNow *= 0.93;
+      out = runShot(pos, sol.speed, sol.el, rot, h0x, h0z, topNow, side, surface);
+      continue;
+    }
     const nc = out.r.netClear;
     const clears = !out.r.hitNet && (nc === null || nc >= minClear);
     if (clears || fixedEl) break;
-    speed *= 0.94;                                   // too flat to clear the net: slow it down (higher arc)
+    speed *= slowSteps++ < 4 ? 0.92 : 0.84;          // too flat to clear the net: slow it down (higher arc)
   }
   const l = out.r.landing;
   return {
-    vel: out.vel, spin: out.spin, speed: sol.speed, el: sol.el, rot,
+    vel: out.vel, spin: out.spin, speed: sol.speed, top: topNow, el: sol.el, rot,
     landing: l ? { x: l.x, z: l.z } : null, netClear: out.r.netClear,
     ok: !!l && !out.r.hitNet && !sol.unreachable && Math.hypot(l.x - target.x, l.z - target.z) < 0.5,
   };
@@ -260,14 +267,14 @@ export function computeHit(inp) {
   const inKmh = inSpeed * 3.6;
   let kmh;
   if (kind === 'volley') {
-    kmh = lerp(P.v[0], P.v[1], power) * 0.55 + 0.38 * inKmh * (0.6 + 0.4 * q);
+    kmh = lerp(25, 85, power) * 0.5 + 0.55 * inKmh * (0.7 + 0.3 * q);
     if (ad != null && ad < -0.5) kmh = lerp(28, 48, power);            // drop volley
   } else {
     kmh = lerp(P.v[0], P.v[1], power) * (0.75 + 0.25 * Math.pow(q, 0.7));
     kmh += Math.min(14, (shot === 'slice' ? 0.08 : 0.15) * Math.max(0, inKmh - 70)) * (kind === 'lob' ? 0 : 1);
     kmh *= 1 + 0.025 * clamp(-behind, 0, 3) - 0.03 * clamp(behind, 0, 4);
     kmh *= 1 - 0.35 * stretch * (kind === 'smash' ? 0.3 : 1);
-    if (shot === 'slice' && ad != null && ad < -0.5) kmh *= 0.55;      // drop shot
+    if (shot === 'slice' && ad != null && ad < -0.5) kmh *= 0.85;      // drop shot
   }
   kmh = Math.max(kind === 'smash' ? 70 : 24, kmh);
   const spinFrac = clamp(0.3 + 0.5 * power + 0.3 * q, 0, 1);

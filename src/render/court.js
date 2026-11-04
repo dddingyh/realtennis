@@ -3,7 +3,7 @@ import { COURT, RENDER } from '../config.js';
 import { camera } from './camera.js';
 import { PixBuf, hex, rgba, mix, shade, bayer, hash2, mulberry32, R, G, B } from './raster.js';
 import { drawPixText, textWidth } from './font.js';
-import { STAGE, SPONSORS } from './stage.js';
+import { STAGE, THEMES } from './stage.js';
 
 const W = RENDER.width, H = RENDER.height;
 const { XW, ZB, BH, S, TOPH, ROW, SEAT, PANEL } = STAGE;
@@ -11,40 +11,47 @@ const { XW, ZB, BH, S, TOPH, ROW, SEAT, PANEL } = STAGE;
 const LINE_W = 0.05;
 const PAL = {
   hard: {
-    inner: [hex('#2f62ab'), hex('#2a579b'), hex('#356bb8')],
-    outer: [hex('#3a8a66'), hex('#33805e'), hex('#43936f')],
-    line: hex('#f3f3ec'),
+    inner: [hex('#3a6fc1'), hex('#3568b8'), hex('#4177ca')],
+    outer: [hex('#6e90bd'), hex('#6788b5'), hex('#7799c5')],
+    line: hex('#f3f3ee'),
   },
   clay: {
-    inner: [hex('#c3592c'), hex('#b34e25'), hex('#d0693a')],
-    outer: [hex('#b9532a'), hex('#a94a23'), hex('#c5603a')],
-    line: hex('#ece6d4'),
+    inner: [hex('#c75f30'), hex('#bc582b'), hex('#d06a3a')],
+    outer: [hex('#b4532a'), hex('#aa4c25'), hex('#bd5b31')],
+    line: hex('#efe9d8'),
   },
   grass: {
-    inner: [hex('#5ca64b'), hex('#52993f'), hex('#68b255')],
-    outer: [hex('#4b923f'), hex('#438738'), hex('#559c47')],
+    inner: [hex('#5fa04b'), hex('#579744'), hex('#69aa54')],
+    outer: [hex('#4c8a3f'), hex('#458238'), hex('#55964a')],
     line: hex('#f1f1e6'),
-    stripeB: [hex('#4f9a42'), hex('#478f3a'), hex('#59a64a')],
+    stripeB: [hex('#518f40'), hex('#4a883a'), hex('#5a9c49')],
     worn: [hex('#a39656'), hex('#948a4b'), hex('#b0a465')],
   },
 };
-
-function makeBoardTextures() {
-  const tw = Math.round(PANEL * 16), th = Math.round(BH * 16);
-  return SPONSORS.map((sp) => {
-    const pb = new PixBuf(tw, th);
-    const bg = hex(sp.bg), fg = hex(sp.fg), ac = hex(sp.ac);
-    pb.clear(bg);
-    pb.rect(0, 0, tw, 1, shade(bg, 1.25));
-    pb.rect(0, th - 3, tw, 3, shade(bg, 0.72));
-    pb.rect(0, 2, tw, 1, ac);
-    pb.rect(0, th - 5, tw, 1, ac);
-    const text = sp.text;
-    const w = textWidth(text, 1);
-    drawPixText(pb, text, Math.round((tw - w) / 2), 5, fg, 1, { shadow: shade(bg, 0.55) });
-    pb.rect(0, 0, 1, th, shade(bg, 0.7));
-    return { px: pb.px, w: tw, h: th };
-  });
+let TH = THEMES.hard;
+const BTEX_W = Math.round(2 * XW * 16), BTEX_H = Math.round(BH * 16);
+function makeBackWall(theme) {
+  const pb = new PixBuf(BTEX_W, BTEX_H);
+  const wall = hex(theme.wall), lite = hex(theme.wallLite), tx = hex(theme.text), led = hex(theme.led);
+  pb.clear(wall);
+  const ledH = 10;
+  // cap + LED strip
+  pb.rect(0, 0, BTEX_W, ledH, hex('#0a0d14'));
+  pb.rect(0, ledH, BTEX_W, 1, lite);
+  const period = 96;
+  for (let x0 = 8; x0 < BTEX_W; x0 += period) drawPixText(pb, '187 KM/H', x0, 1, led, 1);
+  // skirt
+  pb.rect(0, BTEX_H - 2, BTEX_W, 2, shade(wall, 0.6));
+  // brands: symmetric about centre, lots of empty wall
+  const pw = Math.round(PANEL * 16), c = BTEX_W / 2;
+  const order = [0, 1, 2, 1, 0];   // brand index by |slot|
+  for (let k = -2; k <= 2; k++) {
+    const brand = theme.brands[[0, 1, 2][Math.abs(k)] % theme.brands.length];
+    const cx = c + k * pw * 2;
+    const w = textWidth(brand, 1);
+    drawPixText(pb, brand, Math.round(cx - w / 2), ledH + 3, tx, 1);
+  }
+  return { px: pb.px, w: BTEX_W, h: BTEX_H };
 }
 
 function makeClayMarks(seed) {
@@ -87,7 +94,7 @@ export function renderBackground(surface = 'hard', seed = 7) {
   const pal = PAL[key];
   const pb = new PixBuf(W, H);
   const px = pb.px;
-  const boards = makeBoardTextures();
+  TH = THEMES[key]; const boards = makeBackWall(TH);
   const marks = key === 'clay' ? makeClayMarks(seed) : [];
   const cam = camera.pos;
   const cy = cam.y, cz = cam.z;
@@ -125,7 +132,7 @@ function groundColor(key, pal, gx, gz, t, mz, x, y, marks) {
   const n = hash2(x, y, 3);
   let base;
   if (key === 'hard') {
-    const inner = ax <= 6.9 && az <= 14.9;
+    const inner = ax <= 7.3 && az <= 15.4;
     const set = inner ? pal.inner : pal.outer;
     base = n < 0.05 ? set[1] : n > 0.96 ? set[2] : set[0];
     // service boxes marginally lighter for readability
@@ -162,7 +169,7 @@ function groundColor(key, pal, gx, gz, t, mz, x, y, marks) {
     const wb = Math.exp(-Math.pow((az - 11.7) / 1.25, 2)) * Math.exp(-Math.pow(gx / 3.4, 2));
     const wt = Math.exp(-Math.pow((az - 6.1) / 0.7, 2)) * Math.exp(-Math.pow((ax - 0.0) / 1.0, 2)) * 0.6;
     const wm = Math.exp(-Math.pow((az - 0.0) / 1.1, 2)) * Math.exp(-Math.pow(gx / 2.5, 2)) * 0.5;
-    const w = Math.max(wb, wt, wm);
+    const w = Math.max(wb, wt);
     if (w > 0.12) {
       const th = w + (hash2(x >> 1, y, 9) - 0.5) * 0.6;
       if (th > 0.42) base = n > 0.5 ? pal.worn[1] : pal.worn[0];
@@ -181,7 +188,7 @@ function groundColor(key, pal, gx, gz, t, mz, x, y, marks) {
   if (hz > 0) base = mix(base, hex('#a9bed0'), hz);
   const bright = 1.04 - 0.1 * Math.max(0, (ax - 6) / 4);
   const bq = Math.floor((bright) * 16 + bayer(x, y)) / 16;
-  base = shade(base, bq);
+  base = shade(base, bq * shadowMul(gx, gz, x, y));
   return base;
 }
 
@@ -203,26 +210,26 @@ function paintNetShadow(pb, key) {
 }
 
 // ---- off-court shading: boards / stands ----
-const SEAT_COLS = [hex('#2b4a8f'), hex('#8c2f3d'), hex('#2f6f6a'), hex('#c9a13a'), hex('#4a3f86')];
-const CONCRETE = hex('#8d929c');
+const shadowF = (x, z) => x - 0.45 * z - 7.0;   // >0 => in stadium shadow (right/far wedge)
+function shadowMul(x, z, px, py) {
+  const d = shadowF(x, z);
+  if (d <= 0) return 1;
+  const t = Math.min(1, d / 1.6);
+  return bayer(px, py) < t ? 0.74 : 1;
+}
 
-function backdropColor(d, x, y, boards) {
+function backdropColor(d, x, y, boardTex) {
   const cy = camera.pos.y, cz = camera.pos.z;
-  // exit from the stadium box
   let tBack = d.z < 0 ? (-ZB - cz) / d.z : Infinity;
   let tSide = Infinity, side = 0;
   if (d.x > 1e-6) { tSide = XW / d.x; side = 1; } else if (d.x < -1e-6) { tSide = -XW / d.x; side = -1; }
   const tExit = Math.min(tBack, tSide);
   const yExit = cy + tExit * d.y;
   if (yExit <= BH) {
-    if (tBack <= tSide) {
-      const bx = tBack * d.x, by = yExit;
-      return boardColor(boards, (bx + XW) / PANEL, by, 0, tBack, x, y, 1.0);
-    }
+    if (tBack <= tSide) return backWallColor(boardTex, tBack * d.x, yExit, tBack, x, y);
     const bz = cz + tSide * d.z;
-    if (bz > -ZB) return sideBoardColor((bz + 20) / PANEL, yExit, tSide, x, y);
+    if (bz > -ZB) return sideWallColor(bz, yExit, tSide, x, y, side);
   }
-  // stands planes
   let bestT = Infinity, kind = 0;
   const denB = d.y + S * d.z;
   if (denB < 0) {
@@ -242,68 +249,72 @@ function backdropColor(d, x, y, boards) {
   const hx = bestT * d.x, hy = cy + bestT * d.y, hz = cz + bestT * d.z;
   let r, u;
   if (kind === 1) { r = (-ZB - hz) / ROW; u = hx; } else { r = (Math.abs(hx) - XW) / ROW; u = hz; }
-  return seatColor(r, u, kind, bestT, x, y, hy);
+  return seatColor(r, u, kind, bestT, x, y, hx, hz);
 }
 
-function boardColor(boards, u, v, side, t, x, y, lit) {
-  const ti = Math.floor(u);
-  const tex = boards[((ti % boards.length) + boards.length) % boards.length];
-  let fu = u - ti;
-  const tx = Math.min(tex.w - 1, Math.max(0, Math.floor(fu * tex.w)));
-  const ty = Math.min(tex.h - 1, Math.max(0, Math.floor((BH - v) / BH * tex.h)));
+function haze(c, t, x, y, amt = 0.15) {
+  const hz = Math.floor(Math.max(0, Math.min(amt, (t - 38) / 100)) * 8 + bayer(x, y)) / 8;
+  return hz > 0 ? mix(c, hex('#9fb2c6'), hz) : c;
+}
+
+function backWallColor(tex, bx, by, t, x, y) {
+  const tx = Math.min(tex.w - 1, Math.max(0, Math.floor((bx + XW) * 16)));
+  const ty = Math.min(tex.h - 1, Math.max(0, Math.floor((BH - by) / BH * tex.h)));
   let c = tex.px[ty * tex.w + tx];
-  // darken lower and with distance
-  c = shade(c, lit * (v < 0.12 ? 0.8 : 1));
-  const hz = Math.floor(Math.max(0, Math.min(0.15, (t - 38) / 100)) * 8 + bayer(x, y)) / 8;
-  if (hz > 0) c = mix(c, hex('#a9bed0'), hz);
-  return c;
+  c = shade(c, shadowMul(bx, -ZB, x, y));
+  return haze(c, t, x, y);
 }
 
-function seatColor(r, u, kind, t, x, y, hy) {
+function sideWallColor(bz, v, t, x, y, side) {
+  const wall = hex(TH.wall), lite = hex(TH.wallLite);
+  const vv = v / BH;
+  let c = wall;
+  if (vv > 0.93) c = lite;
+  else if (vv < 0.1) c = shade(wall, 0.6);
+  else if (vv < 0.14) c = shade(wall, 1.25);
+  else {
+    // understated brand mark: a short light bar on every 4th panel, centred
+    const u = (bz + 30) / PANEL, pi = Math.floor(u), fu = u - pi;
+    if ((((pi % 4) + 4) % 4) === 2 && fu > 0.3 && fu < 0.7 && vv > 0.42 && vv < 0.58) c = hex(TH.text);
+    else if ((((pi % 4) + 4) % 4) === 2 && fu > 0.3 && fu < 0.7 && vv > 0.62 && vv < 0.67) c = hex(TH.accent);
+  }
+  c = shade(c, 0.88 * shadowMul(side * XW, bz, x, y));
+  return haze(c, t, x, y);
+}
+
+function seatColor(r, u, kind, t, x, y, hx, hz) {
   const row = Math.floor(r), rf = r - row;
   const seatU = u / SEAT + 100;
   const col = Math.floor(seatU), cf = seatU - col;
-  const sect = Math.floor(col / 12);
-  const aisle = (col % 12) === 0 || (col % 12) === 11 && false;
+  const conc = hex(TH.concrete);
   let c;
-  if ((col % 12 + 12) % 12 === 0) { // aisle stairs
-    c = (row & 1) ? CONCRETE : shade(CONCRETE, 0.85);
+  const upper = row >= 5;
+  const aisle = (((col % 10) + 10) % 10) === 0;
+  if (row === 4) {                                   // walkway between tiers
+    c = rf < 0.5 ? shade(conc, 1.05) : shade(conc, 0.82);
+  } else if (aisle) {                                // aisle stairs
+    c = rf < 0.25 ? shade(conc, 1.1) : shade(conc, 0.78);
   } else {
-    const sc = SEAT_COLS[Math.floor(hash2(sect, row >> 2, 1) * SEAT_COLS.length)];
-    if (rf < 0.22) c = shade(CONCRETE, 0.8 + 0.1 * rf); // riser face
-    else if (cf < 0.1) c = shade(sc, 0.6);
-    else if (rf > 0.75) c = shade(sc, 0.75);
+    const sc = hex(row < 4 ? TH.seat2 : TH.seat);
+    if (rf < 0.2) c = shade(conc, 0.78);             // riser
+    else if (cf < 0.12) c = shade(sc, 0.62);
+    else if (rf > 0.72) c = shade(sc, 0.8);
     else c = sc;
+    // a few empty/lighter seats are visible where the crowd skips
   }
-  let b = (kind === 1 ? 1.0 : kind === 2 ? 0.86 : 0.78) * (1 - row * 0.022);
+  let b = (kind === 1 ? 1.0 : kind === 2 ? 0.9 : 0.8) * (upper ? 0.72 : 1);
+  b *= shadowMul(hx, hz, x, y);
   b = Math.floor(b * 14 + bayer(x, y)) / 14;
   c = shade(c, b);
-  const hz = Math.floor(Math.max(0, Math.min(0.28, (t - 40) / 70)) * 8 + bayer(x, y)) / 8;
-  if (hz > 0) c = mix(c, hex('#8ea6bd'), hz);
-  return c;
+  return haze(c, t, x, y, 0.28);
 }
 
 function concourse(d, x, y) {
   const n = hash2(x >> 1, y >> 1, 21);
-  let c = hex('#1b2230');
-  const band = y % 16;
-  if (band < 2) c = hex('#2c3548');
-  if (n > 0.985) c = hex('#f4e9b0');
-  if (y < 6) c = shade(hex('#12161f'), 0.9 + (y & 1) * 0.1);
-  return c;
-}
-
-function sideBoardColor(u, v, t, x, y) {
-  const ti = Math.floor(u), fu = u - ti;
-  const sp = SPONSORS[((ti % SPONSORS.length) + SPONSORS.length) % SPONSORS.length];
-  let c = hex(sp.bg);
-  const vv = v / BH;
-  if (vv > 0.8) c = shade(c, 1.25);
-  else if (vv < 0.28) c = shade(c, 0.7);
-  else if (vv > 0.62 && vv < 0.7) c = hex(sp.ac);
-  else if (fu > 0.45 && fu < 0.55 && vv > 0.3 && vv < 0.6) c = hex(sp.fg);
-  c = shade(c, 0.86);
-  const hz = Math.floor(Math.max(0, Math.min(0.15, (t - 38) / 100)) * 8 + bayer(x, y)) / 8;
-  if (hz > 0) c = mix(c, hex('#a9bed0'), hz);
+  let c = hex('#12161f');
+  if (y % 18 < 2) c = hex('#222a38');
+  if (y < 5) c = hex('#0b0d12');
+  if (y >= 5 && y < 7) c = hex('#2c3547');   // roof rim highlight
+  if (n > 0.992 && y > 8) c = hex('#e8dfb8');
   return c;
 }

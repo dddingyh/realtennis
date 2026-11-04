@@ -29,9 +29,9 @@ export class Renderer {
     if (this.surface === surface && this.bgCanvas) return;
     this.surface = surface;
     const pb = renderBackground(surface);
-    drawStaticPeople(pb);
+    drawStaticPeople(pb, surface);
     this.bgCanvas = pb.flush();
-    if (!this.netLayer) this.netLayer = renderNetLayer().flush();
+    this.netLayer = renderNetLayer(surface).flush();
   }
 
   // react to sim events (visual part)

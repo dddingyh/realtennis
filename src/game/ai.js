@@ -14,22 +14,22 @@ import { PLAYER } from './player.js';
  */
 export const STYLES = {
   grinder: {
-    name: '底线型', attack: 0.25, approach: 0.04, lobMul: 0.8, dropP: 0.02, mix: { topspin: 0.78, slice: 0.17, flat: 0.05 },
+    name: '底线型', attack: 0.25, shortBy: 2.4, approach: 0.04, lobMul: 0.8, dropP: 0.02, mix: { topspin: 0.78, slice: 0.17, flat: 0.05 },
     power: [0.55, 0.78], attackPower: [0.75, 0.9], base: 1.5, prefDepth: 1.0, prefY: 1.0, timeBias: 0.25, netZ: 3.6,
     serve: { flat: 0.2, slice: 0.45, topspin: 0.35 }, serveNet: [0.0, 0.0], cross: 0.7, edge: 0.3, volleyOK: false,
   },
   aggressive: {
-    name: '进攻型', attack: 0.75, approach: 0.45, lobMul: 0.5, dropP: 0.08, mix: { topspin: 0.35, slice: 0.05, flat: 0.6 },
+    name: '进攻型', attack: 0.75, shortBy: 0.2, approach: 0.45, lobMul: 0.5, dropP: 0.08, mix: { topspin: 0.35, slice: 0.05, flat: 0.6 },
     power: [0.72, 0.95], attackPower: [0.88, 1.0], base: -0.3, prefDepth: -0.6, prefY: 0.85, timeBias: -0.8, netZ: 3.2,
     serve: { flat: 0.7, slice: 0.3, topspin: 0.0 }, serveNet: [0.0, 0.0], cross: 0.5, edge: 0.5, volleyOK: true,
   },
   serveVolley: {
-    name: '发球上网', attack: 0.55, approach: 0.6, lobMul: 0.5, dropP: 0.1, mix: { topspin: 0.25, slice: 0.4, flat: 0.35 },
+    name: '发球上网', attack: 0.55, shortBy: 0.9, approach: 0.6, lobMul: 0.5, dropP: 0.1, mix: { topspin: 0.25, slice: 0.4, flat: 0.35 },
     power: [0.62, 0.85], attackPower: [0.8, 0.95], base: 0.6, prefDepth: 0.3, prefY: 0.9, timeBias: -0.4, netZ: 3.0,
     serve: { flat: 0.55, slice: 0.45, topspin: 0.0 }, serveNet: [0.88, 0.45], cross: 0.5, edge: 0.45, volleyOK: true,
   },
   counter: {
-    name: '防守反击型', attack: 0.3, approach: 0.05, lobMul: 1.8, dropP: 0.03, mix: { topspin: 0.5, slice: 0.4, flat: 0.1 },
+    name: '防守反击型', attack: 0.3, shortBy: 2.6, approach: 0.05, lobMul: 1.8, dropP: 0.03, mix: { topspin: 0.5, slice: 0.4, flat: 0.1 },
     power: [0.5, 0.75], attackPower: [0.75, 0.92], base: 2.4, prefDepth: 2.0, prefY: 1.0, timeBias: 0.5, netZ: 3.6,
     serve: { flat: 0.1, slice: 0.5, topspin: 0.4 }, serveNet: [0.0, 0.0], cross: 0.75, edge: 0.25, volleyOK: false,
   },
@@ -162,7 +162,7 @@ export class AIController {
       this.plan = null; this.planKey = -1;
       this.swingMs = sim.rngAI.gauss(0, 8 + 58 * (1 - this.level));
     }
-    if (sim.time < this.reactAt) { this._recoverMove(0.6); return; }
+    if (sim.time < this.reactAt) { this._recoverMove(this.netMode ? 1 : 0.6); return; }
     const key = sim.hitCount * 4 + b.bounces;
     if (this.planKey !== key) this._replan(key);
     const p = this.plan;
@@ -185,7 +185,7 @@ export class AIController {
     const prefs = {
       vmax: PLAYER.maxSpeed * me.speedMul * (0.55 + 0.45 * (me.stamina ?? 1) * 0 + 0.45), accel: PLAYER.accel, reactDelay: Math.max(0, this.reactAt - sim.time),
       allowVolley: wantVolley, yMin: 0.35, yMax: 1.7, prefY: S.prefY, prefDepth: S.prefDepth, timeBias: S.timeBias,
-      volleyYMin: 0.45, volleyYMax: 2.6, volleyZ: S.netZ + 0.6, volleyBias: this.netMode ? -0.8 : -0.1, noiseX: sd, noiseZ: sd * 0.7, rng: sim.rngAI,
+      volleyYMin: 0.45, volleyYMax: 2.6, volleyZ: S.netZ + 0.6, volleyBias: this.netMode ? -0.8 : -0.1, volleyTol: this.netMode ? 0.35 : 0.1, noiseX: sd, noiseZ: sd * 0.7, rng: sim.rngAI,
     };
     prefs.vmax = PLAYER.maxSpeed * me.speedMul * 0.97;
     const c = planInterception(path, me, prefs);
@@ -252,9 +252,9 @@ export class AIController {
         d = { shot: rng.chance(0.55) ? 'topspin' : 'flat', power: lerp(0.65, 0.9, S.attack), aimX: (Math.abs(oppX) > 0.7 ? -sgn(oppX) : openSide) * dtl, aimDepth: rng.range(-0.1, 0.25), edge: 0.6 };
       }
     } else {
-      const short = netD < COURT.halfLength - 2.2 && y > 0.55 && y < 1.55 && stretch < 0.5 && inKmh < 125;
+      const short = netD < COURT.halfLength - S.shortBy && y > 0.55 && y < 1.55 && stretch < 0.5 && inKmh < 125;
       const atk = short ? clamp(S.attack * (0.55 + 0.6 * L) * (netD < COURT.halfLength - 4 ? 1.3 : 1), 0, 0.95) : 0;
-      if (short && rng.chance(S.approach * (0.5 + 0.7 * L) * (netD < COURT.halfLength - 3 ? 1.2 : 0.7))) {
+      if (short && rng.chance(S.approach * (0.5 + 0.7 * L) * (netD < COURT.halfLength - 2.2 ? 1.2 : 0.6))) {
         // approach shot: deep, usually down the line to the open side, then go to the net
         this.wantNet = true;
         d = { shot: this.styleName === 'aggressive' ? 'flat' : 'slice', power: rng.range(0.55, 0.75), aimX: openSide * rng.range(0.5, 0.8), aimDepth: rng.range(0.45, 0.8), edge: 0.35 };

@@ -68,8 +68,9 @@ export function planInterception(path, me, prefs = {}) {
     let sc;
     if (volley) sc = Math.abs(s.y - (prefs.volleyY ?? 1.2)) * 0.5 + Math.abs(Math.abs(s.z) - (prefs.volleyZ ?? 4)) * 0.1 + (prefs.volleyBias ?? 0) + timeBias * 0.1 * s.t;
     else sc = Math.abs(s.y - prefY) * 0.8 + Math.abs(depthBehind - prefDepth) * 0.12 + timeBias * 0.25 * s.t;
-    const cand = { t: s.t, ball: { x: s.x, y: s.y, z: s.z }, stand: { x: useF ? fx : bx, z: standZ }, side: useF ? 'fh' : 'bh', bounces: s.b, feasible: slack >= 0, tNeed, slack };
-    if (slack >= 0) { if (sc < bestScore) { bestScore = sc; best = cand; } }
+    const tol = volley ? (prefs.volleyTol ?? 0) : 0;
+    const cand = { t: s.t, ball: { x: s.x, y: s.y, z: s.z }, stand: { x: useF ? fx : bx, z: standZ }, side: useF ? 'fh' : 'bh', bounces: s.b, feasible: slack >= -tol, tNeed, slack };
+    if (slack >= -tol) { if (sc < bestScore) { bestScore = sc; best = cand; } }
     else { const f = -slack + sc * 0.2; if (f < fbScore) { fbScore = f; fallback = cand; } }
   }
   return best || fallback;

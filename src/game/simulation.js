@@ -222,7 +222,7 @@ export class Simulation {
       case 'point-over':
         if (this.nextWalkAt !== null && this.phaseT >= this.nextWalkAt) { this.nextWalkAt = null; if (!this.pending?.matchOver) this._assignWalk(true); }
         if (this.phaseT >= (this.pending?.matchOver ? T.matchOver : T.pointOver)) {
-          if (this.pending?.matchOver) { this._setPhase('match-over'); this.ball.visible = false; }
+          if (this.pending?.matchOver) { this._setPhase('match-over'); this.ball.visible = false; const w = this.match.winner; if (w !== null) { this.players[w].celebrateT = 30; this.players[1 - w].dejectedT = 30; } }
           else if (this.pending?.changeover) { this._setPhase('changeover'); this.ball.visible = false; this._assignWalk(true); for (const p of this.players) p.stamina = Math.min(1, p.stamina + 0.25); }
           else this._beginServePrep(false);
         }
@@ -277,14 +277,14 @@ export class Simulation {
     this._syncMatch();
   }
 
-  _servePrepUpdate() {
+  _servePrepUpdate(dt) {
     const s = this.match.server;
     const sp = this.players[s];
     // human server may fine-tune x along the baseline once arrived
     if (sp.isHuman && !sp.walkTarget && !this.toss) {
       const box = this.serveBox;
       const lo = box.standSign > 0 ? 0.3 : -3.8, hi = box.standSign > 0 ? 3.8 : -0.3;
-      sp.pos.x = clamp(sp.pos.x + sp.manual.x * 2.0 * (1 / PHYSICS.simHz), lo, hi);
+      sp.pos.x = clamp(sp.pos.x + sp.manual.x * 2.0 * dt, lo, hi);
       this._serveStandX = sp.pos.x; this._serveStandSign = box.standSign;
       sp.pos.z = sp.facing * (COURT.halfLength + 0.45);
     }
@@ -353,6 +353,7 @@ export class Simulation {
     this.rally.shots = 1; this.rally.touched[i] = true; this.rally.lastHitTime = this.time; this.rally.lastQ = res.quality;
     this.rally.serveLet = false;
     pl.serve.phase = 0.65;
+    pl.syncAnim();
     pl.walkTarget = null;
     pl.moveScale = 1;              // server may start moving (e.g. serve & volley) right after contact
     const kmh = res.speedKmh;

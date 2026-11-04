@@ -22,6 +22,8 @@ export const MAX_CL = 0.45;                 // lift coefficient clamp
 export const TANGENTIAL_RESTITUTION = { hard: 0.18, clay: 0.12, grass: 0.0 };
 const ROLL_VY = 0.7;                        // post-bounce vertical speed below this -> rolling
 const ROLL_DECEL = 1.2;                     // m/s^2 rolling resistance
+/** Extra vertical rebound (fraction of the tangential impulse) when the ball grips: topspin 'kick' from ball/court deformation. */
+export const GRIP_KICK = { hard: 0.12, clay: 0.2, grass: 0.04 };
 export const NET_CORD_BELOW = 0.02;         // ball centre this far under the tape still counts as tape contact
 const NET_HIT_DAMP = { vx: 0.2, vy: 0.3, vz: -0.12, spin: 0.3 };
 
@@ -99,6 +101,7 @@ export function bounceVelocity(v, w, surf, surfKey = 'hard') {
     const maxF = mu * jn;
     grip = need <= maxF;
     const J = grip ? need : maxF;
+    if (grip) v.y += (GRIP_KICK[surfKey] ?? 0.1) * J;
     const jx = -J * ux / ut, jz = -J * uz / ut;
     v.x += jx; v.z += jz;
     w.x += -jz / (k * R);                      // dw = (r_c x J) / (k m R^2)
