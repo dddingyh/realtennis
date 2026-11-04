@@ -3,7 +3,7 @@
 import { RENDER } from '../config.js';
 
 const W = RENDER.width, H = RENDER.height;
-const CAM = { x: 0, y: 12.5, z: 34, pitchDeg: 23, fovDeg: 26.5 }; // framed so a player 4.6 m behind the near baseline stays fully on screen
+const CAM = { x: 0, y: 10, z: 34, pitchDeg: 19, fovDeg: 24.5 }; // lower broadcast angle (~27° to the near player); a player 4.6 m behind the near baseline stays in frame
 const pitch = CAM.pitchDeg * Math.PI / 180;
 const sinA = Math.sin(pitch), cosA = Math.cos(pitch);
 const F = (H / 2) / Math.tan(CAM.fovDeg * Math.PI / 360);
