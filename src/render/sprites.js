@@ -5,20 +5,41 @@
 // Frames are cached per (role, hand, animation, quantised phase, size, colours).
 import { PixBuf } from './raster.js';
 import { poseFor, solve, clamp } from './pose.js';
-import { buildModel } from './char_model.js';
+import { buildModel, viewBasis } from './char_model.js';
 import { marchModel, finish, paletteFor } from './char_sdf.js';
 
 const DEFAULT_LOOK = { skin: '#e0a97c', hair: '#2a1d12', shirt: '#e8e8e0', shorts: '#2a3a6a', shoes: '#f0f0f0', headband: null };
 
-export function renderPlayerFrame(P, J, look, role, s) {
-  const model = buildModel(J, look, role, s);
-  const pal = paletteFor(look);
-  const buf = marchModel(model, s, look, { role, noEyes: s < 30 || role === 'near', small: s < 24 });
-  const px = finish(buf, pal, s, { innerDepth: role === 'near' ? 0.085 : 0.11, inner: s >= 24 });
-  const pb = new PixBuf(buf.W, buf.H);
-  pb.px.set(px);
+// DOM-free: animation -> RGBA pixels { w, h, px: Uint32Array, ox, oy } (ox/oy = feet anchor)
+export function renderPlayerPixels(anim, pl, role, s, ctx = {}) {
+  const look = pl.look || DEFAULT_LOOK, hand = pl.hand || 'R';
+  const P = poseFor(anim, { ...ctx, role });
+  const J = solve(P, hand);
+  // secondary motion: hair / headband tails trail the head (pose a moment earlier)
+  let lag = null;
+  const prev = prevAnim(anim, ctx);
+  if (prev && s >= 22) {
+    const Jp = solve(poseFor(prev.a, { ...prev.c, role }), hand);
+    lag = [Jp.headC[0] - J.headC[0], Jp.headC[1] - J.headC[1], Jp.headC[2] - J.headC[2]].map((v) => Math.max(-0.05, Math.min(0.05, v * 1.4)));
+  }
+  const model = buildModel(J, look, role, s, { lag });
+  const vb = viewBasis(role);
+  const buf = marchModel(model, s, look, { role, U: vb.U, F: vb.F });
+  const px = finish(buf, paletteFor(look), s, { innerDepth: role === 'near' ? 0.08 : 0.10, inner: s >= 22 });
+  return { w: buf.W, h: buf.H, px, ox: buf.ox, oy: buf.oy };
+}
+function prevAnim(a, ctx) {
+  if (a.name === 'swing' || a.name === 'serve') return { a: { ...a, phase: Math.max(0, (a.phase || 0) - 0.035) }, c: ctx };
+  if (a.name === 'run' || a.name === 'walk') return { a, c: { ...ctx, runPhase: ((ctx.runPhase || 0) + 0.94) % 1 } };
+  return null;
+}
+
+export function renderPlayerFrame(anim, pl, role, s, ctx) {
+  const r = renderPlayerPixels(anim, pl, role, s, ctx);
+  const pb = new PixBuf(r.w, r.h);
+  pb.px.set(r.px);
   pb.flush();
-  return { pb, ox: buf.ox, oy: buf.oy };
+  return { pb, ox: r.ox, oy: r.oy };
 }
 
 function cropFrame(r) {
@@ -34,7 +55,7 @@ function cropFrame(r) {
   return { canvas: c, ax: ox - x0, ay: oy - y0 };
 }
 
-const SWING_Q = 40, SERVE_Q = 48;
+const SWING_Q = 64, SERVE_Q = 64, RUN_Q = 16, READY_Q = 8;
 
 export class SpriteFactory {
   constructor() {
@@ -66,8 +87,8 @@ export class SpriteFactory {
     if (name === 'swing') ph = Math.round(clamp(this.disp[i] != null ? this.disp[i] : a.phase || 0, 0, 1) * SWING_Q);
     else if (name === 'serve') ph = Math.round(clamp(a.phase || 0, 0, 1) * SERVE_Q);
     else if (name === 'split') ph = a.phase == null ? 20 : Math.round(clamp(a.phase, 0, 1) * 20);
-    else if (name === 'run' || name === 'walk') ph = Math.floor(this.runPhase[i] * 12) % 12;
-    else if (name === 'ready') ph = Math.floor(time * 6.0 / (Math.PI * 2) * 6) % 6;
+    else if (name === 'run' || name === 'walk') ph = Math.floor(this.runPhase[i] * RUN_Q) % RUN_Q;
+    else if (name === 'ready') ph = Math.floor(time * 6.0 / (Math.PI * 2) * READY_Q) % READY_Q;
     else if (name === 'idle') ph = Math.floor(time * 0.9) % 3;
     else if (name === 'celebrate') ph = Math.floor((time * 1.8 % 1) * 12);
     else if (name === 'dejected') ph = Math.floor(time * 0.6) % 4;
@@ -93,22 +114,20 @@ export class SpriteFactory {
     else if (name === 'serve') qa.phase = ph / SERVE_Q;
     else if (name === 'split') qa.phase = ph / 20;
     let qTime = time;
-    if (name === 'ready') qTime = ph / 6 * (Math.PI * 2 / 6.0);
+    if (name === 'ready') qTime = (ph + 0.5) / READY_Q * (Math.PI * 2 / 6.0);
     if (name === 'idle') qTime = ph / 0.9;
     if (name === 'celebrate') qTime = ph / 12 / 1.8;
     if (name === 'dejected') qTime = ph / 0.6;
-    const rp = (name === 'run' || name === 'walk') ? (ph % 12) / 12 : 0;
+    const rp = (name === 'run' || name === 'walk') ? (ph % RUN_Q) / RUN_Q : 0;
     if (name === 'run') {
       const d = a.dir || { x: 0, z: 0 };
       const ang = Math.round(Math.atan2(d.x, -d.z) / (Math.PI / 4)) * (Math.PI / 4);
       qa.dir = { x: Math.sin(ang), z: -Math.cos(ang) };
       qa.speed = Math.round((a.speed == null ? 0.7 : a.speed) * 3) / 3 || 0.34;
     }
-    const P = poseFor(qa, { runPhase: rp, time: qTime, role });
-    const J = solve(P, pl.hand || 'R');
-    f = cropFrame(renderPlayerFrame(P, J, pl.look || DEFAULT_LOOK, role, s));
+    f = cropFrame(renderPlayerFrame(qa, pl, role, s, { runPhase: rp, time: qTime }));
     this.cache.set(key, f);
-    if (this.cache.size > 2600) this.cache.delete(this.cache.keys().next().value);
+    if (this.cache.size > 3200) this.cache.delete(this.cache.keys().next().value);
     if (t0) { const dt = performance.now() - t0; this.stats.frames++; this.stats.ms += dt; this.stats.maxMs = Math.max(this.stats.maxMs, dt); }
     return f;
   }
@@ -145,7 +164,7 @@ export class SpriteFactory {
       q = [];
       const A = (o) => q.push(o);
       A({ name: 'ready' }); A({ name: 'split', phase: 0.7 });
-      for (let k = 0; k < 6; k++) A({ name: 'ready', _t: k });
+      for (let k = 0; k < READY_Q; k++) A({ name: 'ready', _t: k });
       for (const [shot, side] of [['topspin', 'fh'], ['topspin', 'bh'], ['flat', 'fh'], ['flat', 'bh'], ['slice', 'fh'], ['slice', 'bh']]) {
         for (let k = 1; k <= SWING_Q; k += 1) A({ name: 'swing', shot, side, phase: k / SWING_Q });
       }
@@ -157,7 +176,7 @@ export class SpriteFactory {
       const a = q.shift();
             const pl = { hand, look, anim: a, vel: { x: 0, z: 0 } };
       this.disp[2] = null;
-      this.get(2, pl, role, s, a._t != null ? ((a._t + 0.5) / 6) * (Math.PI * 2 / 6.0) : 0);
+      this.get(2, pl, role, s, a._t != null ? ((a._t + 0.5) / READY_Q) * (Math.PI * 2 / 6.0) : 0);
     }
     return q.length;
   }

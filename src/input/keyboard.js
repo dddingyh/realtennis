@@ -11,7 +11,7 @@ export const KEYBOARD_HELP = [
   { key: 'K', desc: '平击球（速度快，风险高）' },
   { key: 'L', desc: '切削球（低平、慢，防守/过渡）' },
   { key: 'I', desc: '挑高球（越过网前对手）' },
-  { key: '空格', desc: '发球：按下抛球，在球最高点松开击球；第二发请用 J 上旋 / L 切削更稳' },
+  { key: '空格', desc: '发球：按下抛球，球过最高点开始下落时松开击球；第二发请用 J 上旋 / L 切削更稳' },
   { key: 'Esc / P', desc: '暂停 / 继续' },
 ];
 
@@ -72,14 +72,14 @@ export function attachKeyboard(sim, playerIndex = 0, target = (typeof window !==
     }
     if (c === 'Space') {
       spaceDown = now();
-      if (isServing()) sim.serveToss(playerIndex);
+      if (isServing()) sim.serveToss(playerIndex, { shot: sim.state.match.faultCount > 0 ? 'topspin' : 'flat' });
       else sim.prepare(playerIndex, { shot: 'flat' });
       return;
     }
     if (c in SHOT_KEYS) {
       const shot = SHOT_KEYS[c];
       shotDown.set(c, { t0: now(), shot });
-      if (isServing()) sim.serveToss(playerIndex);
+      if (isServing()) sim.serveToss(playerIndex, { shot: shot === 'lob' ? 'topspin' : shot });
       else sim.prepare(playerIndex, { shot });
     }
   }

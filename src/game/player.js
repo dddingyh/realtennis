@@ -65,6 +65,7 @@ export class Player {
     this.celebrateT = 0; this.dejectedT = 0;
     this.walkTarget = null;                      // {x,z} automatic walk between points
     this.serve = null;                           // serve state, managed by Simulation
+    this.routine = null;                         // pre-serve ball-bounce routine, managed by Simulation
     this.moveScale = 1;
     this.anim = { name: 'ready', shot: null, side: null, phase: 0, dir: { x: 0, z: 0 }, speed: 0 };
     this.racketHead = { x: 0, y: 1, z: 0 };
@@ -170,8 +171,12 @@ export class Player {
     const dir = a.dir;
     if (sp > 0.3) { dir.x = this.vel.x / sp; dir.z = this.vel.z / sp; }
     a.speed = Math.min(1, sp / PLAYER.maxSpeed);
-    if (this.serve) {                 // serve animation driven by Simulation
-      a.name = 'serve'; a.phase = this.serve.phase; a.shot = null; a.side = null;
+    if (this.serve) {                 // serve animation driven by Simulation (serve_choreo.js timeline)
+      a.name = 'serve'; a.phase = this.serve.phase; a.shot = this.serve.type || 'flat'; a.side = null;
+      return;
+    }
+    if (this.routine) {               // pre-serve ball bounce routine: phase = progress of the current bounce
+      a.name = 'bounce'; a.phase = this.routine.mode === 'dribble' ? this.routine.u : 0; a.shot = null; a.side = null;
       return;
     }
     if (this.swingT >= 0) {

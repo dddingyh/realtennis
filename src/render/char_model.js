@@ -67,13 +67,13 @@ export function buildModel(J, look, role, s, opt = {}) {
   const twist = Math.atan2(dot(cross(pel.f, chs.f), [0, 1, 0]), dot(pel.f, chs.f));
   // pelvis + glutes (shorts)
   ell(MAT.SHORTS, comb(J.hip, pel.u, 0.03), P3, [0.158, 0.105, 0.108], K, PART.PELVIS, HOOK.PELVIS);
-  for (const sg of [1, -1]) ell(MAT.SHORTS, comb(J.hip, pel.r, 0.074 * sg, pel.f, -0.052, pel.u, -0.035), P3, [0.084, 0.094, 0.074], 0.04, PART.PELVIS, HOOK.PELVIS);
+  for (const sg of [1, -1]) ell(MAT.SHORTS, comb(J.hip, pel.r, 0.072 * sg, pel.f, -0.048, pel.u, -0.035), P3, [0.080, 0.090, 0.070], 0.06, PART.PELVIS, HOOK.PELVIS);
   // waist, ribcage, lats, pecs, upper back
-  ell(MAT.SHIRT, comb(J.hip, midU, 0.205), M3, [0.130, 0.13, 0.094], 0.05, PART.TORSO, HOOK.TORSO);
-  ell(MAT.SHIRT, J.chestC, C3, [0.155, 0.16, 0.106], 0.05, PART.TORSO, HOOK.TORSO);
+  ell(MAT.SHIRT, comb(J.hip, midU, 0.200), M3, [0.136, 0.135, 0.100], 0.07, PART.TORSO, HOOK.TORSO);
+  ell(MAT.SHIRT, J.chestC, C3, [0.158, 0.165, 0.108], 0.07, PART.TORSO, HOOK.TORSO);
   for (const sg of [1, -1]) {
-    ell(MAT.SHIRT, comb(J.chestC, chs.r, 0.088 * sg, chs.f, -0.035, chs.u, -0.01), C3, [0.082, 0.14, 0.074], 0.05, PART.TORSO, HOOK.TORSO);
-    ell(MAT.SHIRT, comb(J.chestC, chs.r, 0.068 * sg, chs.f, 0.052, chs.u, 0.065), C3, [0.074, 0.058, 0.052], 0.04, PART.TORSO, HOOK.TORSO);
+    ell(MAT.SHIRT, comb(J.chestC, chs.r, 0.085 * sg, chs.f, -0.030, chs.u, -0.01), C3, [0.078, 0.14, 0.070], 0.07, PART.TORSO, HOOK.TORSO);
+    ell(MAT.SHIRT, comb(J.chestC, chs.r, 0.066 * sg, chs.f, 0.050, chs.u, 0.065), C3, [0.074, 0.058, 0.050], 0.06, PART.TORSO, HOOK.TORSO);
   }
   ell(MAT.SHIRT, comb(J.neckBase, chs.u, -0.08, chs.f, -0.035), C3, [0.13, 0.075, 0.066], 0.05, PART.TORSO, HOOK.TORSO);
   // trapezius slope and clavicles: proper neck-to-shoulder line
@@ -189,7 +189,7 @@ export function buildModel(J, look, role, s, opt = {}) {
     }
     // shorts leg (flared), with hem + side stripe painted
     const outward = mul(inward, -1);
-    cone(MAT.SHORTS, comb(hj, a, -0.02), comb(hj, a, tl * 0.56), 0.099, 0.104, 0.02, partLeg, HOOK.SLEG, { a: TP(comb(hj, a, -0.02)), d: TP(a), L: tl * 0.58, o: TP(outward) });
+    cone(MAT.SHORTS, comb(hj, a, -0.02), comb(hj, a, tl * 0.50), 0.099, 0.104, 0.02, partLeg, HOOK.SLEG, { a: TP(comb(hj, a, -0.02)), d: TP(a), L: tl * 0.52, o: TP(outward) });
     // lower leg: tibia core + gastrocnemius (two heads) + Achilles narrowing
     let sb = perp(kf, sa); sb = len(sb) < 0.05 ? norm(perp(ft.dir, sa)) : norm(sb);
     const ss = norm(cross(sa, sb));

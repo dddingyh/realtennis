@@ -9,6 +9,7 @@ import { Player, PLAYER, pickLook } from './player.js';
 import { computeHit, computeServe, contactGeometry, isReachable, serviceBox, inBox, inSinglesCourt, IDEAL_F } from './shot.js';
 import { predictPath, planInterception } from './predict.js';
 import { AIController } from './ai.js';
+import { SERVE_T, STAND_BEHIND, DRIBBLE, dribble, tossBall, servePhase, rootOffset, contactPoint, toWorld, vecToWorld, HAND_REST } from './serve_choreo.js';
 
 // ---------------------------------------------------------------- tunables
 export const DEFAULT_TIMING = {
@@ -19,8 +20,9 @@ export const DEFAULT_TIMING = {
   faultHold: 1.0,        // s the faulted ball keeps flying before the server gets a new ball
   aiServeDelay: [0.9, 1.8], // AI server waits this long before tossing
   walkDelay: 0.7,        // s after a point ends before players start walking to serve positions
+  dribbles: [2, 4],      // pre-serve ball bounces (AI server); first serve. Second serve uses [1, 2].
+  dribblesHuman: [2, 3], // human server (the human can serve as soon as the ball is back in the hand)
 };
-const TOSS = { y0: 1.05, apexY: 3.0, forward: 0.35, apexT: Math.sqrt(2 * (3.0 - 1.05) / PHYSICS.gravity) };
 const HISTORY = 40;                 // ball history ring entries (~330 ms at 120 Hz)
 const BUFFER_MS = { keyboard: 150, ai: 100, remote: 240 };
 const RALLY_TIMEOUT = 20;           // s watchdog
@@ -143,7 +145,7 @@ export class Simulation {
     const p = this._normSwing(params, pl);
     if (this.phase === 'serve-prep' || this.phase === 'serving') {
       if (i === this.match.server) {
-        if (this.phase === 'serve-prep') return this._beginServe(i, p, true);
+        if (this.phase === 'serve-prep') return this._requestServe(i, p, true, p.shot);
         if (this.toss && !this.toss.hit) return this._hitServe(i, p);
         return false;
       }
@@ -155,10 +157,16 @@ export class Simulation {
   }
 
   /** Toss the ball for the server (optional; swing() during serve-prep tosses and hits automatically). */
-  serveToss(i) {
+  serveToss(i, opts = {}) {
     if (this.paused) return false;
     if (this.phase !== 'serve-prep' || i !== this.match.server) return false;
-    return this._beginServe(i, null, false);
+    return this._requestServe(i, null, false, opts.shot);
+  }
+
+  /** Server i has finished the ball-bounce routine and holds the ball (AI waits for this; humans may interrupt). */
+  serverReady(i) {
+    const pl = this.players[i];
+    return this.canServe(i) && !!pl.routine && pl.routine.mode === 'hold' && !this._pendingServe;
   }
 
   pause(v) { this.paused = !!v; }
@@ -169,7 +177,7 @@ export class Simulation {
   /** Is player i (server) allowed to toss right now? */
   canServe(i) {
     return this.phase === 'serve-prep' && i === this.match.server && this.phaseT >= Math.max(this.timing.prepMin, this.prepHold)
-      && (!this.players[i].walkTarget) && (!this.players[1 - i].walkTarget || this.phaseT > 3.5);
+      && (!this.players[i].walkTarget) && !this.players[i].serve && (!this.players[1 - i].walkTarget || this.phaseT > 3.5);
   }
 
   /** Error stats per racket side for player i (used by the AI to find the weaker side). */
@@ -206,6 +214,7 @@ export class Simulation {
 
   _setPhase(name) {
     this.phase = name; this.phaseT = 0;
+    if (name !== 'serve-prep') { for (const p of this.players) p.routine = null; this._pendingServe = null; }
     this.state.match.phase = name;
     this._emit({ type: 'phase', phase: name });
   }
@@ -241,7 +250,7 @@ export class Simulation {
     const deuce = m.serveCourt === 'deuce';
     const box = serviceBox(sp.facing, deuce);
     const sx = box.standSign * (1.1 + 0.5 * (s === 0 ? 0 : 0));
-    const server = { x: sp.isHuman && this._serveStandX !== undefined && this._serveStandSign === box.standSign ? this._serveStandX : sx, z: sp.facing * (COURT.halfLength + 0.45) };
+    const server = { x: sp.isHuman && this._serveStandX !== undefined && this._serveStandSign === box.standSign ? this._serveStandX : sx, z: sp.facing * (COURT.halfLength + STAND_BEHIND) };
     const second = this.faultCount > 0;
     const receiver = { x: box.boxSign * (second ? 1.4 : 1.8), z: rp.facing * (COURT.halfLength + (second ? 0.6 : 1.4)) };
     return { server, receiver, box };
@@ -271,8 +280,11 @@ export class Simulation {
       this.players[s].pos.x = sp.server.x; this.players[s].pos.z = sp.server.z;
       this.players[1 - s].pos.x = sp.receiver.x; this.players[1 - s].pos.z = sp.receiver.z;
     } else this._assignWalk(false);
-    for (const p of this.players) { p.serve = null; p.prepared = null; p.buffered = null; p.celebrateT = 0; p.dejectedT = 0; p.moveScale = 1; }
-    this.ball.inPlay = false; this.ball.visible = true; this.ball.lastHitBy = -1; this.ball.bounces = 0; this.ball.rolling = false; this.ball.netHit = false;
+    this._walkAfterServe = false;
+    for (const p of this.players) { p.serve = null; p.routine = null; p.prepared = null; p.buffered = null; p.celebrateT = 0; p.dejectedT = 0; p.moveScale = 1; }
+    this._pendingServe = null;
+    this.ball.attach = null;
+    this.ball.inPlay = false; this.ball.visible = !!initial; this.ball.lastHitBy = -1; this.ball.bounces = 0; this.ball.rolling = false; this.ball.netHit = false;
     this._aiServeAt = this.rngMisc.range(this.timing.aiServeDelay[0], this.timing.aiServeDelay[1]);
     this._syncMatch();
   }
@@ -280,59 +292,163 @@ export class Simulation {
   _servePrepUpdate(dt) {
     const s = this.match.server;
     const sp = this.players[s];
-    // human server may fine-tune x along the baseline once arrived
-    if (sp.isHuman && !sp.walkTarget && !this.toss) {
+    this._routineUpdate(sp, dt);
+    // human server may fine-tune x along the baseline once arrived (only while holding the ball)
+    if (sp.isHuman && !sp.walkTarget && !this.toss && (!sp.routine || sp.routine.mode === 'hold')) {
       const box = this.serveBox;
       const lo = box.standSign > 0 ? 0.3 : -3.8, hi = box.standSign > 0 ? 3.8 : -0.3;
       sp.pos.x = clamp(sp.pos.x + sp.manual.x * 2.0 * dt, lo, hi);
       this._serveStandX = sp.pos.x; this._serveStandSign = box.standSign;
-      sp.pos.z = sp.facing * (COURT.halfLength + 0.45);
+      sp.pos.z = sp.facing * (COURT.halfLength + STAND_BEHIND);
     }
     // receiver free once arrived (handled by intents)
   }
 
   // ----------------------------------------------------------------- serving
-  _beginServe(i, params, auto) {
+  /**
+   * Pre-serve routine of the server: a few ball bounces driven by the tossing hand (serve_choreo.dribble), then
+   * the ball is held at rest. The ball is placed from the choreography every step, so it is always in the hand.
+   */
+  _routineUpdate(pl, dt) {
+    const b = this.ball;
+    if (this.toss || pl.serve) return;
+    if (pl.walkTarget || this.phaseT < this.prepHold) {          // walking to the spot / faulted ball still flying
+      if (pl.walkTarget && !(this.phaseT < this.prepHold)) { b.visible = false; b.attach = null; }
+      pl.routine = null;
+      return;
+    }
+    this.prepHold = 0;
+    if (!pl.routine) {
+      const range = pl.isHuman ? this.timing.dribblesHuman : this.timing.dribbles;
+      const lo = this.faultCount > 0 ? Math.min(1, range[0]) : range[0], hi = this.faultCount > 0 ? Math.min(2, range[1]) : range[1];
+      const n = lo + this.rngMisc.int(Math.max(1, hi - lo + 1));
+      pl.routine = { mode: n > 0 ? 'dribble' : 'hold', n, u: 0, holdT: 0, O: { x: pl.pos.x, z: pl.pos.z } };
+      pl.vel.x = 0; pl.vel.z = 0;
+    }
+    const r = pl.routine;
+    r.O.x = pl.pos.x; r.O.z = pl.pos.z;
+    let local, vel = [0, 0, 0], held = true;
+    if (r.mode === 'dribble') {
+      const u0 = r.u;
+      r.u += dt / DRIBBLE.period;
+      const g = dribble(0).groundAt;
+      if (u0 < g && r.u >= g) {
+        const w = toWorld(pl, r.O, [HAND_REST[0], 0, HAND_REST[2]]);
+        this._emit({ type: 'bounce', pos: { x: w.x, y: 0, z: w.z }, in: true, court: null, dribble: true });
+      }
+      if (r.u >= 1) {
+        r.n--; r.u = 0;
+        if (r.n <= 0) { r.mode = 'hold'; r.holdT = 0; }
+      }
+      const d = dribble(r.u);
+      local = d.ball; vel = d.ballVel; held = d.held;
+    } else {
+      r.holdT += dt;
+      local = HAND_REST;
+      if (pl.isHuman && r.holdT > 6 && !this._pendingServe) { r.mode = 'dribble'; r.n = 2; r.u = 0; }
+    }
+    this._placeBall(pl, r.O, local, vel, held, 'routine');
+    // a serve request waits until the ball is back in the hand at rest
+    if (this._pendingServe && r.u === 0) {
+      const q = this._pendingServe; this._pendingServe = null;
+      this._beginServe(this.match.server, q.params, q.auto, q.shot);
+    }
+  }
+
+  _placeBall(pl, O, local, vel, held, mode) {
+    const b = this.ball;
+    const w = toWorld(pl, O, local), v = vecToWorld(pl, vel);
+    b.pos.x = w.x; b.pos.y = w.y; b.pos.z = w.z; b.vel.x = v.x; b.vel.y = v.y; b.vel.z = v.z;
+    b.spin.x = b.spin.y = b.spin.z = 0;
+    b.visible = true; b.inPlay = false; b.rolling = false; b.netHit = false; b.bounces = 0;
+    b.attach = { i: pl.index, held, mode, k: 1, O: { x: O.x, z: O.z } };
+  }
+
+  _requestServe(i, params, auto, shot) {
     if (!this.canServe(i)) return false;
     const pl = this.players[i];
-    const dirZ = -pl.facing;
+    if (!pl.routine) this._routineUpdate(pl, 0);
+    if (!pl.routine) return false;
+    if (pl.routine.mode === 'hold' || pl.routine.u === 0) return this._beginServe(i, params, auto, shot);
+    this._pendingServe = { params, auto, shot };                  // finish the current bounce first
+    return true;
+  }
+
+  _beginServe(i, params, auto, shot) {
+    if (!this.canServe(i)) return false;
+    const pl = this.players[i];
     pl.vel.x = 0; pl.vel.z = 0; pl.moveScale = 0;
     this.players[1 - i].walkTarget = null;
-    const jx = this.rngMisc.range(-0.12, 0.12);
-    this.toss = { t: 0, hit: false, auto: auto ? { params, hitAt: TOSS.apexT + this.rngMisc.range(-0.025, 0.025) } : null, hitT: 0 };
-    pl.serve = { phase: 0.02 };
-    const b = this.ball;
-    const hand = pl.handX;
-    b.pos.x = pl.pos.x + hand * 0.25; b.pos.y = TOSS.y0; b.pos.z = pl.pos.z + dirZ * 0.3;
-    b.vel.x = jx; b.vel.y = Math.sqrt(2 * PHYSICS.gravity * (TOSS.apexY - TOSS.y0)); b.vel.z = dirZ * 0.35;
-    b.spin.x = b.spin.y = b.spin.z = 0;
-    b.bounces = 0; b.rolling = false; b.netHit = false; b.visible = true; b.inPlay = false;
+    const type = shot === 'topspin' || shot === 'slice' || shot === 'flat' ? shot : (this.faultCount > 0 ? 'topspin' : 'flat');
+    const O = { x: pl.pos.x, z: pl.pos.z };
+    this.toss = { t: 0, tm: 0, type, O, hit: false, hitT: 0, auto: auto ? { params, hitAt: SERVE_T.contact + this.rngMisc.range(-0.012, 0.012) } : null };
+    pl.routine = null;
+    pl.serve = { phase: 0, type, free: false };
+    pl.syncAnim();
     this.rally.serveLet = false;
+    const bt = tossBall(type, 0);
+    this._placeBall(pl, O, bt.pos, bt.vel, true, 'toss');
     this._setPhase('serving');
     return true;
   }
 
+  /** Drive the serve motion: ball on the toss path until hit, body (feet) along the choreographed root path. */
   _updateServe(dt) {
-    if (!this.toss) return;
-    const t = this.toss, pl = this.players[this.match.server];
-    t.t += dt;
-    if (!pl.serve) return;
-    if (!t.hit) {
-      pl.serve.phase = Math.min(0.62, 0.02 + 0.6 * (t.t / TOSS.apexT));
-      if (t.auto && t.t >= t.auto.hitAt) this._hitServe(this.match.server, t.auto.params);
-      else if (!t.hit && t.t > 1.6) this._tossFailed();
-    } else {
-      const k = (this.time - t.hitT) / 0.35;
-      pl.serve.phase = Math.min(1, 0.65 + 0.35 * k);
-      if (k >= 1) { pl.serve = null; pl.moveScale = 1; }
+    for (const pl of this.players) if (pl.serve && pl.serve.hit) this._serveMotion(pl);
+    const b = this.ball, t = this.toss;
+    if (!t || t.hit) {
+      if (b.attach && b.attach.mode === 'hit') {
+        b.attach.k = Math.max(0, 1 - (this.time - b.attach.hitT) / 0.12);
+        if (b.attach.k <= 0) b.attach = null;
+      }
+      return;
     }
+    const i = this.match.server, pl = this.players[i];
+    t.t += dt;
+    // before contact the motion follows real time; if the swing is late the body waits just before contact
+    t.tm = Math.min(t.t, SERVE_T.contact - 0.02);
+    if (pl.serve) {
+      pl.serve.phase = servePhase(t.tm);
+      const ro = rootOffset(t.tm), w = toWorld(pl, t.O, ro);
+      pl.pos.x = w.x; pl.pos.z = w.z; pl.vel.x = 0; pl.vel.z = 0;
+      pl.syncAnim();
+    }
+    const bt = tossBall(t.type, t.t);
+    this._placeBall(pl, t.O, bt.pos, bt.vel, bt.held, 'toss');
+    if (t.auto && t.t >= t.auto.hitAt) this._hitServe(i, t.auto.params);
+    else if (t.t > SERVE_T.contact + SERVE_T.catchLate) this._tossFailed();
+  }
+
+  /** After contact: jump forward, land inside the baseline, follow through, recovery step. */
+  _serveMotion(pl) {
+    const sv = pl.serve;
+    const tm = SERVE_T.contact + (this.time - sv.hitT);
+    sv.phase = servePhase(tm);
+    if (pl.walkTarget && !sv.free) sv.free = true;
+    if (!sv.free) {
+      const ro = rootOffset(tm), ro2 = rootOffset(tm + 1e-3);
+      const w = toWorld(pl, sv.O, ro);
+      const v = vecToWorld(pl, [(ro2[0] - ro[0]) / 1e-3, 0, (ro2[2] - ro[2]) / 1e-3]);
+      pl.pos.x = w.x; pl.pos.z = w.z; pl.vel.x = v.x; pl.vel.z = v.z;
+      if (tm >= SERVE_T.land) { sv.free = true; pl.moveScale = 1; }
+    } else if (Math.hypot(pl.vel.x, pl.vel.z) > 2.2 && tm > SERVE_T.land + 0.1) {
+      sv.done = true;                                             // running on (serve & volley): run animation
+    }
+    if (tm >= SERVE_T.end || sv.done) {
+      pl.serve = null; pl.moveScale = 1;
+      if (this._walkAfterServe) { this._walkAfterServe = false; this._assignWalk(false); }
+    }
+    pl.syncAnim();
   }
 
   _tossFailed() {
     const pl = this.players[this.match.server];
     pl.serve = null; pl.moveScale = 1;
+    if (this.toss) { pl.pos.x = this.toss.O.x; pl.pos.z = this.toss.O.z; pl.vel.x = pl.vel.z = 0; }
     this.toss = null;
-    this.prepHold = 0.6;
+    this.ball.attach = null;
+    this._pendingServe = null;
+    this.prepHold = 0.8;
     this._setPhase('serve-prep');
     this.ball.inPlay = false;
   }
@@ -341,9 +457,10 @@ export class Simulation {
     const pl = this.players[i], b = this.ball, t = this.toss;
     if (!t || t.hit) return false;
     if (b.pos.y < 0.6) return false;
+    const ideal = toWorld(pl, t.O, contactPoint(t.type));
     const res = computeServe({
       server: pl, ball: b, swing: p, serveNumber: this.faultCount + 1, deuce: this.match.serveCourt === 'deuce',
-      surface: this.surfaceKey, rng: this.rngShot, opts: this.shotOpts,
+      surface: this.surfaceKey, rng: this.rngShot, opts: this.shotOpts, ideal,
     });
     t.hit = true; t.hitT = this.time;
     b.vel.x = res.vel.x; b.vel.y = res.vel.y; b.vel.z = res.vel.z;
@@ -352,10 +469,12 @@ export class Simulation {
     this.hitCount++;
     this.rally.shots = 1; this.rally.touched[i] = true; this.rally.lastHitTime = this.time; this.rally.lastQ = res.quality;
     this.rally.serveLet = false;
-    pl.serve.phase = 0.65;
+    t.tm = SERVE_T.contact;
+    if (!pl.serve) pl.serve = { phase: 0, type: t.type, free: false };
+    Object.assign(pl.serve, { hit: true, hitT: this.time, O: { ...t.O }, type: t.type, phase: servePhase(SERVE_T.contact) });
     pl.syncAnim();
     pl.walkTarget = null;
-    pl.moveScale = 1;              // server may start moving (e.g. serve & volley) right after contact
+    b.attach = { ...(b.attach || {}), i, held: false, mode: 'hit', k: 1, hitT: this.time };
     const kmh = res.speedKmh;
     this.stats.maxServeKmh[i] = Math.max(this.stats.maxServeKmh[i], Math.round(kmh));
     if (this.faultCount === 0) this.stats.firstServesTotal[i]++;
@@ -481,11 +600,8 @@ export class Simulation {
     // age marks
     const maxAge = this.surfaceKey === 'clay' ? 120 : 6;
     for (let k = b.marks.length - 1; k >= 0; k--) { b.marks[k].age += dt; if (b.marks[k].age > maxAge) b.marks.splice(k, 1); }
-    if (ph === 'serve-prep' && !this.toss && this.phaseT >= this.prepHold) {
-      this.prepHold = 0;
-      this._heldBall();
-      return;
-    }
+    if (this.toss && !this.toss.hit) return;                    // ball on the choreographed toss path
+    if (ph === 'serve-prep' && !this.toss && this.phaseT >= this.prepHold) return;   // held / bounced by the routine
     const n = Math.max(1, Math.ceil(dt / PHYSICS.fixedDt - 1e-9));
     const h = dt / n;
     for (let k = 0; k < n; k++) this._ballMicro(h);
@@ -494,16 +610,6 @@ export class Simulation {
       this._onBounce({ x: b.pos.x, z: b.pos.z, synthetic: true });
     }
     if (b.rolling && (this.phase === 'point-over') && this.phaseT > 1.2) b.visible = b.visible && this.phaseT < this.timing.pointOver - 0.2;
-  }
-
-  _heldBall() {
-    const s = this.players[this.match.server], b = this.ball;
-    const dirZ = -s.facing;
-    const ph = (this.time * 1.3) % 1;
-    b.pos.x = s.pos.x + s.handX * 0.3; b.pos.z = s.pos.z + dirZ * 0.35;
-    b.pos.y = BALL.radius + 0.75 * Math.abs(Math.sin(Math.PI * ph)) * (ph < 0.5 || true ? 1 : 1);
-    b.vel.x = b.vel.y = b.vel.z = 0; b.spin.x = b.spin.y = b.spin.z = 0;
-    b.visible = true; b.inPlay = false; b.rolling = false; b.bounces = 0;
   }
 
   _ballMicro(h) {
@@ -573,10 +679,26 @@ export class Simulation {
     this._emit({ type: 'call', text: 'LET' });
     this.ball.inPlay = false;
     this.prepHold = this.timing.faultHold;
-    this.toss = null;
-    const pl = this.players[this.match.server]; pl.serve = null; pl.moveScale = 1;
+    this._endServeAttempt();
     this._setPhase('serve-prep');
     this._aiServeAt = this.rngMisc.range(this.timing.aiServeDelay[0], this.timing.aiServeDelay[1]);
+    this._walkBackAfterServe();
+  }
+
+  /** The serve attempt is over (fault/let/point): an unhit toss is aborted, a hit serve finishes its motion. */
+  _endServeAttempt() {
+    const pl = this.players[this.match.server];
+    if (pl.serve && !pl.serve.hit) {
+      if (this.toss) { pl.pos.x = this.toss.O.x; pl.pos.z = this.toss.O.z; }
+      pl.serve = null; pl.moveScale = 1;
+    }
+    if (this.ball.attach && this.ball.attach.mode !== 'hit') this.ball.attach = null;
+    this.toss = null;
+  }
+
+  _walkBackAfterServe() {
+    const pl = this.players[this.match.server];
+    if (pl.serve && pl.serve.hit) this._walkAfterServe = true; else this._assignWalk(false);
   }
 
   _fault(text) {
@@ -591,13 +713,12 @@ export class Simulation {
       return;
     }
     this._emit({ type: 'call', text });
-    this.toss = null;
-    const pl = this.players[s]; pl.serve = null; pl.moveScale = 1;
+    this._endServeAttempt();
     this.prepHold = this.timing.faultHold;
     this._setPhase('serve-prep');
     this.state.match.faultCount = this.faultCount;
     this._aiServeAt = this.rngMisc.range(this.timing.aiServeDelay[0], this.timing.aiServeDelay[1]);
-    this._assignWalk(false);
+    this._walkBackAfterServe();
   }
 
   _endPoint(winner, reason, info) {
@@ -625,8 +746,9 @@ export class Simulation {
     this._emit({ type: 'score', text: res.text });
     this.faultCount = 0;
     this.state.match.faultCount = 0;
-    this.toss = null;
-    for (const p of this.players) { p.serve = null; p.moveScale = 1; p.buffered = null; p.prepared = null; }
+    this._endServeAttempt();
+    this._pendingServe = null;
+    for (const p of this.players) { if (!(p.serve && p.serve.hit)) { p.serve = null; p.moveScale = 1; } p.routine = null; p.buffered = null; p.prepared = null; }
     const w = this.players[winner], l = this.players[loser];
     if (reason === 'winner' || reason === 'ace' || res.gameWon) w.celebrateT = 1.6;
     if (reason === 'out' || reason === 'net' || reason === 'double-fault' || res.gameWon) l.dejectedT = 1.5;
@@ -646,7 +768,7 @@ export class Simulation {
       const pl = this.players[i];
       if (this.ais[i]) continue;                       // AI writes pl.intent itself
       const man = pl.manual;
-      if ((pl.serve && !(this.toss && this.toss.hit)) || pl.walkTarget || this.phase === 'match-over') { pl.intent.x = 0; pl.intent.z = 0; continue; }
+      if ((pl.serve && !pl.serve.free) || pl.walkTarget || this.phase === 'match-over') { pl.intent.x = 0; pl.intent.z = 0; continue; }
       if (this.phase === 'serve-prep' && i === this.match.server) { pl.intent.x = 0; pl.intent.z = 0; continue; }
       let ix = man.x, iz = man.z;
       if (pl.autoMove !== 'off' && (this.phase === 'rally' || this.phase === 'serving' || this.phase === 'serve-prep')) {
@@ -713,9 +835,9 @@ export class Simulation {
     h.i = hi; h.reachable = false; h.contactIn = null; h.canServe = false; h.text = '';
     if ((this.phase === 'serve-prep' || this.phase === 'serving') && hi === this.match.server) {
       h.canServe = this.canServe(hi);
-      h.text = this.toss ? (this.toss.hit ? '' : '在球最高点击球') : (h.canServe ? '按空格发球' : '准备发球');
+      h.text = this.toss ? (this.toss.hit ? '' : '球从最高点落下时击球') : (h.canServe ? '按空格发球' : '准备发球');
       h.side = pl.hand === 'R' ? 'fh' : 'fh';
-      if (this.toss && !this.toss.hit) h.contactIn = Math.max(0, TOSS.apexT - this.toss.t);
+      if (this.toss && !this.toss.hit) h.contactIn = Math.max(0, SERVE_T.contact - this.toss.t);
     } else if (b.inPlay && b.lastHitBy !== hi && (this.phase === 'rally' || this.phase === 'serving')) {
       const geo = contactGeometry(pl, b);
       h.side = geo.side;

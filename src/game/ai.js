@@ -5,6 +5,7 @@ import { COURT } from '../config.js';
 import { contactGeometry, isReachable } from './shot.js';
 import { predictPath, planInterception } from './predict.js';
 import { PLAYER } from './player.js';
+import { SERVE_T } from './serve_choreo.js';
 
 // ---------------------------------------------------------------- style tables (tunables)
 /**
@@ -106,10 +107,10 @@ export class AIController {
     this._stop();
     this.seenHit = -1;
     if (sim.match.server !== this.i) return;
-    if (!sim.canServe(this.i)) return;
+    if (!sim.serverReady(this.i)) return;            // finish the ball-bounce routine first
     if (sim.phaseT < sim._aiServeAt) return;
     this.serveParams = this._planServe();
-    if (sim.serveToss(this.i)) {
+    if (sim.serveToss(this.i, { shot: this.serveParams.shot })) {
       this.tossed = true;
       this.jitter = sim.rngAI.gauss(0, (1 - this.level) * 0.05 + 0.008);
     }
@@ -118,7 +119,7 @@ export class AIController {
   _serving() {
     const sim = this.sim;
     this._stop();
-    if (sim.toss.t >= 0.645 + this.jitter) {
+    if (sim.toss.t >= SERVE_T.contact + this.jitter) {
       sim.swing(this.i, { ...this.serveParams, source: 'ai' });
     }
   }

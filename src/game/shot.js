@@ -351,9 +351,11 @@ export function computeServe(inp) {
   const power = clamp(swing.power ?? 0.85, 0, 1);
   const shot = SHOT_SET.has(swing.shot) && swing.shot !== 'lob' ? swing.shot : 'flat';
 
-  const dy = ball.pos.y - 2.85;
+  // ideal contact point: from the serve choreography (inp.ideal, world), else a generic point above the front foot
+  const ideal = inp.ideal || { x: server.pos.x + 0.25 * handX, y: 2.80, z: server.pos.z + dirZ * 0.35 };
+  const dy = ball.pos.y - ideal.y;
   const qh = Math.exp(-((dy / 0.5) ** 2));
-  const hd = Math.hypot(ball.pos.x - (server.pos.x + 0.25 * handX), ball.pos.z - (server.pos.z + dirZ * 0.35));
+  const hd = Math.hypot(ball.pos.x - ideal.x, ball.pos.z - ideal.z);
   const qp = 1 - 0.6 * clamp((hd - 0.6) / 1.0, 0, 1);
   let q = clamp(qh * qp * (0.9 + 0.1 * (server.stamina ?? 1)), 0.02, 1);
   if (opts.forceQuality != null) q = opts.forceQuality;

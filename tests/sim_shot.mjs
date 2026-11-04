@@ -187,23 +187,7 @@ function feed(sim, z, speed = 20) {
   sim.swing(0, { shot: 'flat', power: 0.8 });
   check('no second hit on own ball / during cooldown', !sim.drainEvents().some((e) => e.type === 'hit'));
 }
-{
-  // serve: swing in serve-prep tosses and hits automatically
-  const sim = mk(); for (let i = 0; i < 1200 && !sim.canServe(0); i++) sim.step(1 / 120);
-  const i = sim.match.server;
-  check('canServe true after players are in place', sim.canServe(i));
-  sim.swing(i, { shot: 'flat', power: 0.9, source: 'remote' });
-  check('swing during serve-prep starts the toss', sim.state.match.phase === 'serving' && sim.ball.pos.y > 1.0);
-  let served = null;
-  for (let k = 0; k < 400 && !served; k++) { sim.step(1 / 120); served = sim.drainEvents().find((e) => e.type === 'serve'); }
-  check('auto-serve hits near the toss apex', served && sim.toss.t > 0.55 && sim.toss.t < 0.75, served && `${served.speedKmh.toFixed(0)} km/h at toss t=${sim.toss.t.toFixed(2)}`);
-  const sim2 = mk(); for (let k = 0; k < 1200 && !sim2.canServe(sim2.match.server); k++) sim2.step(1 / 120);
-  const s2 = sim2.match.server; sim2.serveToss(s2);
-  for (let k = 0; k < 20; k++) sim2.step(1 / 120);
-  sim2.swing(s2, { shot: 'flat', power: 0.9 });                   // way too early: low ball
-  const sv = sim2.drainEvents().find((e) => e.type === 'serve');
-  check('serve hit while the ball is still low has poor quality', sv && sim2.state.lastShot.quality < 0.3, `q=${sim2.state.lastShot.quality.toFixed(2)}`);
-}
+// serve mechanics are covered by tests/sim_serve.mjs
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
