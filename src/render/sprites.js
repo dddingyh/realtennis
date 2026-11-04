@@ -13,7 +13,7 @@ const DEFAULT_LOOK = { skin: '#e0a97c', hair: '#2a1d12', shirt: '#e8e8e0', short
 export function renderPlayerFrame(P, J, look, role, s) {
   const model = buildModel(J, look, role, s);
   const pal = paletteFor(look);
-  const buf = marchModel(model, s, look, { role, noEyes: s < 30 || role === 'near' });
+  const buf = marchModel(model, s, look, { role, noEyes: s < 30 || role === 'near', small: s < 24 });
   const px = finish(buf, pal, s, { innerDepth: role === 'near' ? 0.085 : 0.11, inner: s >= 24 });
   const pb = new PixBuf(buf.W, buf.H);
   pb.px.set(px);
@@ -41,6 +41,7 @@ export class SpriteFactory {
     this.cache = new Map(); this.runPhase = [0, 0]; this.lastPos = [null, null];
     this.disp = [null, null]; // displayed swing phase (eases the jump from the load pose to contact)
     this.stats = { frames: 0, ms: 0, maxMs: 0 };
+    this.seen = new Map(); this._sched = false; this.autoWarm = true;
   }
 
   // advance gait phase by travelled distance
@@ -82,6 +83,7 @@ export class SpriteFactory {
     const key = this.frameKey(i, pl, role, s, time);
     let f = this.cache.get(key);
     if (f) return f;
+    if (this.autoWarm && i < 2) this._note(role, s, pl.look || DEFAULT_LOOK, pl.hand || 'R');
     const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
     const a = pl.anim || { name: 'ready' };
     const name = a.name || 'ready';
@@ -106,9 +108,31 @@ export class SpriteFactory {
     const J = solve(P, pl.hand || 'R');
     f = cropFrame(renderPlayerFrame(P, J, pl.look || DEFAULT_LOOK, role, s));
     this.cache.set(key, f);
-    if (this.cache.size > 3000) this.cache.delete(this.cache.keys().next().value);
+    if (this.cache.size > 2600) this.cache.delete(this.cache.keys().next().value);
     if (t0) { const dt = performance.now() - t0; this.stats.frames++; this.stats.ms += dt; this.stats.maxMs = Math.max(this.stats.maxMs, dt); }
     return f;
+  }
+
+  // remember which (role,size,look,hand) combos are in use and warm their frames while the browser is idle
+  _note(role, s, look, hand) {
+    const k = `${role}|${s}|${hand}|${look.shirt}${look.shorts}${look.hair}${look.skin}${look.shoes}${look.headband || ''}`;
+    if (this.seen.has(k)) return;
+    this.seen.set(k, { role, s, look, hand });
+    if (this.seen.size > 6) this.seen.delete(this.seen.keys().next().value);
+    if (!this._sched && typeof window !== 'undefined') { this._sched = true; this._idle(); }
+  }
+  _idle() {
+    const run = (dl) => {
+      let left = 0;
+      const t0 = performance.now();
+      for (const c of [...this.seen.values()].reverse()) {
+        const budget = Math.min(6, (dl && dl.timeRemaining ? dl.timeRemaining() : 6) - (performance.now() - t0));
+        if (budget <= 1) { left = 1; break; }
+        left += this.prewarm(c.role, c.s, c.look, c.hand, budget);
+      }
+      if (left) this._idle(); else this._sched = false;
+    };
+    if (window.requestIdleCallback) window.requestIdleCallback(run, { timeout: 400 }); else setTimeout(() => run(null), 40);
   }
 
   // Render the commonly used frames ahead of time (call from idle callbacks while in the menu). Returns the number
@@ -131,10 +155,9 @@ export class SpriteFactory {
     const t0 = performance.now();
     while (q.length && performance.now() - t0 < budgetMs) {
       const a = q.shift();
-      const time = a._t != null ? a._t * (Math.PI * 2 / 6.0) / 6 * 6 : 0;
-      const pl = { hand, look, anim: a, vel: { x: 0, z: 0 } };
+            const pl = { hand, look, anim: a, vel: { x: 0, z: 0 } };
       this.disp[2] = null;
-      this.get(2, pl, role, s, a._t != null ? (a._t / 6) * (Math.PI * 2 / 6.0) : 0);
+      this.get(2, pl, role, s, a._t != null ? ((a._t + 0.5) / 6) * (Math.PI * 2 / 6.0) : 0);
     }
     return q.length;
   }

@@ -14,10 +14,11 @@ const N = +(q.get('n') || 10);
 const CW = +(q.get('w') || 1600);
 const look = { skin: '#e0a97c', hair: '#2a1d12', shirt: role === 'near' ? '#e23d3d' : '#f2c230', shorts: '#243a6a', shoes: '#f0f0f0', headband: role === 'far' ? '#ffffff' : null };
 if (q.get('shirt')) look.shirt = '#' + q.get('shirt');
-const f = new SpriteFactory();
+const f = new SpriteFactory(); f.autoWarm = false;
 const c = document.getElementById('c');
 const items = [];
-const sw = (shot, side, lbl) => { for (let i = 0; i < N; i++) items.push({ name: 'swing', shot, side, phase: 0.04 + 0.96 * i / (N - 1), row: lbl }); };
+const PH = q.get('ph') ? q.get('ph').split(',').map(Number) : null;
+const sw = (shot, side, lbl) => { const L = PH || Array.from({ length: N }, (_, i) => 0.04 + 0.96 * i / (N - 1)); for (const p of L) items.push({ name: 'swing', shot, side, phase: p, row: lbl }); };
 for (const st of sets) {
   if (st === 'fh') sw('topspin', 'fh');
   if (st === 'bh') sw('topspin', 'bh');
@@ -30,12 +31,12 @@ for (const st of sets) {
   if (st === 'fhvolley') sw('volley', 'fh');
   if (st === 'bhvolley') sw('volley', 'bh');
   if (st === 'smash') sw('smash', 'fh');
-  if (st === 'serve') for (let i = 0; i < N; i++) items.push({ name: 'serve', phase: i / (N - 1) });
+  if (st === 'serve') { const L = PH || Array.from({ length: N }, (_, i) => i / (N - 1)); for (const p of L) items.push({ name: 'serve', phase: p }); }
   if (st === 'misc') for (const [n, ph, t] of [['ready', 0, 0], ['ready', 0, 0.5], ['ready', 0, 1.0], ['split', 0.1], ['split', 0.2], ['split', 0.7], ['idle', 0, 0], ['celebrate', 0, 0.1], ['celebrate', 0, 0.35], ['dejected', 0, 0.4], ['walk', 0, 0, 0], ['walk', 0, 0, 3]]) items.push({ name: n, phase: ph, _t: t, _rp: (n === 'walk' ? (t || 0) / 6 : undefined) });
   if (st === 'run') for (const [x, z] of [[0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1]]) for (let k = 0; k < 3; k++) items.push({ name: 'run', dir: { x: x / Math.hypot(x, z), z: z / Math.hypot(x, z) }, speed: 0.9, _rp: k / 3 + 0.04 });
   if (st === 'walk') for (let k = 0; k < 8; k++) items.push({ name: 'walk', _rp: k / 8 + 0.02 });
 }
-const cw = Math.round(1.7 * s * Z), chh = Math.round(2.35 * s * Z);
+const cw = Math.round(1.7 * s * Z), chh = Math.round((q.get("ch") ? +q.get("ch") : 2.4) * s * Z);
 const cols = Math.max(1, Math.floor(CW / cw));
 const rows = Math.ceil(items.length / cols);
 c.width = CW; c.height = rows * chh + 8;

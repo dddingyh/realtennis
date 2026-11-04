@@ -22,7 +22,7 @@ const V = (x, y, z) => [x, y, z];
 
 export const BODY = {
   hipHalf: 0.095, thigh: 0.445, shin: 0.425, ankleH: 0.085,
-  upperArm: 0.305, foreArm: 0.265, shoulderHalf: 0.195,
+  upperArm: 0.305, foreArm: 0.265, shoulderHalf: 0.186,
   spine: 0.60, waist: 0.24, gripT: 0.085, // grip centre measured from the racket butt
 };
 
@@ -36,7 +36,7 @@ const N = SCHEMA.reduce((s, e) => s + e[1], 0);
 const READY = {
   hip: V(0, 0.79, -0.06), lean: 0.30, side: 0, py: 0.0, cy: 0.06, hy: 0, hp: 0.06,
   fL: V(-0.34, 0, 0.04), fR: V(0.34, 0, -0.04), fLy: -0.10, fRy: 0.10, fLp: 0, fRp: 0,
-  hD: V(0.10, 1.02, 0.40), ax: V(0.03, 0.30, 0.95), fc: V(1, 0, 0), hO: V(-0.1, 1.05, 0.35), th: 1, offT: 0.235, yaw: 0,
+  hD: V(0.13, 1.00, 0.36), ax: V(0.06, 0.52, 0.85), fc: V(0.75, 0.55, 0), hO: V(-0.1, 1.05, 0.35), th: 1, offT: 0.2, yaw: 0,
 };
 const mk = (o) => { const p = {}; for (const [k, n] of SCHEMA) { const v = o && o[k] !== undefined ? o[k] : READY[k]; p[k] = n === 1 ? v : v.slice(); } return p; };
 function pack(p) { const a = new Float64Array(N); let i = 0; for (const [k, n] of SCHEMA) { if (n === 1) a[i++] = p[k]; else for (let j = 0; j < n; j++) a[i++] = p[k][j]; } return a; }
@@ -91,7 +91,7 @@ const FH_TOP = track([
   K(0.22, { ...FH_FEET, py: 0.75, cy: 1.28, hip: V(0.06, 0.75, -0.08), lean: 0.30, hD: V(0.40, 1.22, -0.30), ax: V(0.28, 0.62, -0.72), fc: V(0.35, -0.55, 0.6), hO: V(-0.02, 1.38, 0.52), th: 0.0, hy: 0.45, hp: 0.10 }),
   K(0.40, { ...FH_FEET, py: 0.80, cy: 1.34, hip: V(0.10, 0.70, -0.12), lean: 0.34, hD: V(0.44, 0.86, -0.34), ax: V(0.25, -0.05, -0.97), fc: V(0.4, -0.7, 0.5), hO: V(-0.10, 1.34, 0.50), th: 0, hy: 0.50, hp: 0.14 }),
   K(0.45, { ...FH_FEET, py: 0.38, cy: 1.00, hip: V(0.07, 0.72, -0.04), lean: 0.34, hD: V(0.46, 0.84, -0.10), ax: V(0.40, 0.05, -0.92), fc: V(0.3, -0.6, 0.7), hO: V(-0.20, 1.34, 0.48), th: 0, hy: 0.45, hp: 0.15 }),
-  K(0.50, { ...FH_FEET, py: -0.05, cy: 0.35, hip: V(0.0, 0.78, 0.10), lean: 0.30, hD: V(0.52, 1.00, 0.46), ax: V(0.05, 0.86, 0.50), fc: V(0.0, 0.1, 1), hO: V(-0.36, 1.26, 0.22), th: 0, hy: 0.35, hp: 0.15 }),
+  K(0.50, { ...FH_FEET, py: -0.05, cy: 0.35, hip: V(0.0, 0.78, 0.10), lean: 0.30, hD: V(0.52, 1.00, 0.46), ax: V(-0.42, 0.80, 0.30), fc: V(0.0, 0.1, 1), hO: V(-0.36, 1.26, 0.22), th: 0, hy: 0.35, hp: 0.15 }),
   K(0.58, { ...FH_FEET, fR: V(0.30, 0.03, -0.05), fRp: 0.5, fRy: 0.7, py: -0.45, cy: -0.25, hip: V(-0.03, 0.86, 0.16), lean: 0.22, hD: V(0.30, 1.28, 0.60), ax: V(-0.45, 0.70, 0.50), fc: V(-0.2, 0.7, 0.7), hO: V(-0.34, 1.20, 0.10), th: 0, hy: 0.15 }),
   K(0.68, { fL: V(-0.18, 0, 0.32), fLy: 0.5, fR: V(0.22, 0.10, 0.10), fRp: 0.7, fRy: 0.2, py: -0.65, cy: -0.75, hip: V(-0.06, 0.88, 0.16), lean: 0.2, hD: V(0.02, 1.52, 0.38), ax: V(-0.75, 0.25, 0.1), fc: V(-0.2, 0.9, 0.0), hO: V(-0.30, 1.12, 0.12), th: 0.3, hy: -0.05, hp: 0.0 }),
   K(0.82, { fL: V(-0.2, 0, 0.30), fLy: 0.2, fR: V(0.20, 0, 0.18), fRy: 0.1, py: -0.60, cy: -0.85, hip: V(-0.04, 0.86, 0.14), lean: 0.22, hD: V(-0.20, 1.48, 0.12), ax: V(-0.45, -0.35, -0.80), fc: V(-0.3, 0.8, -0.2), hO: V(-0.18, 1.18, 0.30), th: 0.8, hy: -0.2 }),
@@ -116,7 +116,7 @@ const BH_TOP = track([
   K(0.22, { ...BH_FEET, py: -0.70, cy: -1.25, hip: V(-0.06, 0.74, -0.08), hD: V(-0.34, 1.12, -0.18), ax: V(-0.35, 0.40, -0.82), fc: V(-0.2, -0.3, 0.9), hO: V(-0.28, 1.06, -0.02), th: 1, offT: 0.17, hy: -0.50, hp: 0.10 }),
   K(0.40, { ...BH_FEET, py: -0.78, cy: -1.32, hip: V(-0.10, 0.70, -0.12), lean: 0.34, hD: V(-0.38, 0.90, -0.28), ax: V(-0.20, -0.05, -0.97), fc: V(-0.1, -0.5, 0.8), hO: V(-0.34, 0.86, -0.18), th: 1, offT: 0.17, hy: -0.52, hp: 0.14 }),
   K(0.45, { ...BH_FEET, py: -0.34, cy: -0.98, hip: V(-0.06, 0.72, -0.04), lean: 0.34, hD: V(-0.34, 0.90, -0.06), ax: V(-0.28, 0.05, -0.95), fc: V(-0.1, -0.3, 0.9), hO: V(-0.28, 0.88, 0.04), th: 1, offT: 0.17, hy: -0.46, hp: 0.15 }),
-  K(0.50, { ...BH_FEET, py: 0.05, cy: -0.40, hip: V(0.0, 0.78, 0.12), hD: V(-0.18, 1.04, 0.50), ax: V(0.05, 0.85, 0.50), fc: V(0, 0.1, 1), hO: V(-0.26, 1.02, 0.42), th: 1, offT: 0.17, hy: -0.36, hp: 0.15 }),
+  K(0.50, { ...BH_FEET, py: 0.05, cy: -0.40, hip: V(0.0, 0.78, 0.12), hD: V(-0.18, 1.04, 0.50), ax: V(0.42, 0.80, 0.30), fc: V(0, 0.1, 1), hO: V(-0.26, 1.02, 0.42), th: 1, offT: 0.17, hy: -0.36, hp: 0.15 }),
   K(0.60, { ...BH_FEET, fL: V(-0.30, 0.03, 0.0), fLp: 0.5, fLy: -0.6, py: 0.45, cy: 0.20, hip: V(0.03, 0.86, 0.22), lean: 0.24, hD: V(0.02, 1.32, 0.54), ax: V(0.30, 0.80, 0.30), fc: V(0.1, 0.8, 0.5), hO: V(-0.06, 1.22, 0.40), th: 1, offT: 0.17, hy: -0.15 }),
   K(0.72, { fR: V(0.18, 0, 0.34), fRy: -0.45, fL: V(-0.22, 0.10, 0.12), fLp: 0.7, fLy: -0.2, py: 0.65, cy: 0.65, hip: V(0.06, 0.88, 0.20), lean: 0.22, hD: V(0.26, 1.54, 0.20), ax: V(0.55, 0.35, -0.60), fc: V(0.1, 0.9, 0), hO: V(0.20, 1.46, 0.18), th: 1, offT: 0.17, hy: 0.05, hp: 0.0 }),
   K(0.86, { fR: V(0.20, 0, 0.30), fRy: -0.2, fL: V(-0.20, 0, 0.18), fLy: -0.1, py: 0.55, cy: 0.80, hip: V(0.04, 0.86, 0.14), lean: 0.22, hD: V(0.22, 1.50, 0.06), ax: V(0.40, -0.40, -0.80), fc: V(0.2, 0.8, -0.2), hO: V(0.12, 1.42, 0.04), th: 1, offT: 0.17, hy: 0.15 }),
@@ -128,7 +128,7 @@ const BH_FLAT = track([
   K(0.22, { ...BH_FEET, py: -0.70, cy: -1.25, hip: V(-0.06, 0.75, -0.08), hD: V(-0.34, 1.08, -0.20), ax: V(-0.25, 0.20, -0.92), fc: V(-0.1, -0.2, 0.95), hO: V(-0.28, 1.00, -0.04), th: 1, offT: 0.17, hy: -0.50, hp: 0.10 }),
   K(0.40, { ...BH_FEET, py: -0.76, cy: -1.30, hip: V(-0.08, 0.72, -0.10), hD: V(-0.38, 1.00, -0.26), ax: V(-0.15, 0.10, -0.98), fc: V(-0.1, -0.2, 0.95), hO: V(-0.34, 0.94, -0.16), th: 1, offT: 0.17, hy: -0.52, hp: 0.14 }),
   K(0.45, { ...BH_FEET, py: -0.34, cy: -0.98, hip: V(-0.06, 0.74, -0.02), hD: V(-0.34, 1.00, -0.04), ax: V(-0.20, 0.15, -0.96), fc: V(-0.05, -0.2, 0.95), hO: V(-0.28, 0.96, 0.06), th: 1, offT: 0.17, hy: -0.46, hp: 0.15 }),
-  K(0.50, { ...BH_FEET, py: 0.05, cy: -0.40, hip: V(0.0, 0.78, 0.12), hD: V(-0.18, 1.06, 0.52), ax: V(0.15, 0.55, 0.82), fc: V(0, 0, 1), hO: V(-0.26, 1.04, 0.44), th: 1, offT: 0.17, hy: -0.36, hp: 0.15 }),
+  K(0.50, { ...BH_FEET, py: 0.05, cy: -0.40, hip: V(0.0, 0.78, 0.12), hD: V(-0.18, 1.06, 0.52), ax: V(0.40, 0.60, 0.65), fc: V(0, 0, 1), hO: V(-0.26, 1.04, 0.44), th: 1, offT: 0.17, hy: -0.36, hp: 0.15 }),
   K(0.62, { ...BH_FEET, fL: V(-0.30, 0.03, 0.0), fLp: 0.5, fLy: -0.6, py: 0.35, cy: 0.10, hip: V(0.03, 0.86, 0.24), lean: 0.24, hD: V(-0.02, 1.28, 0.78), ax: V(0.50, 0.30, 0.78), fc: V(0.1, 0.4, 0.9), hO: V(-0.1, 1.22, 0.66), th: 1, offT: 0.17, hy: -0.15 }),
   K(0.78, { fR: V(0.18, 0, 0.34), fRy: -0.4, fL: V(-0.22, 0.10, 0.14), fLp: 0.7, fLy: -0.2, py: 0.55, cy: 0.45, hip: V(0.05, 0.88, 0.22), lean: 0.22, hD: V(0.14, 1.42, 0.62), ax: V(0.82, 0.15, 0.30), fc: V(0.1, 0.8, 0.2), hO: V(0.06, 1.36, 0.54), th: 1, offT: 0.17, hy: 0.0 }),
   K(1.0, {}),
@@ -276,8 +276,8 @@ function gait(phase, dir, speed, walk) {
   p.py = 0.20 * ps * (walk ? 0.4 : 1); p.cy = -0.26 * ps * (walk ? 0.4 : 1);
   p.hy = 0; p.hp = 0.02;
   if (walk) {
-    p.hD = V(0.20 + 0.02 * ps, 0.86, 0.12 + 0.14 * Math.cos(TAU * g)); p.ax = V(0.10, -0.80, 0.45); p.fc = V(1, 0, 0); p.th = 0;
-    p.hO = V(-0.24, 0.90, 0.10 - 0.14 * Math.cos(TAU * g));
+    p.hD = V(0.25 + 0.02 * ps, 0.78, 0.08 + 0.17 * Math.cos(TAU * g)); p.ax = V(0.10, -0.80, 0.45); p.fc = V(1, 0, 0); p.th = 0;
+    p.hO = V(-0.25, 0.80, 0.08 - 0.17 * Math.cos(TAU * g));
   } else {
     const a = 0.08 + 0.10 * speed;
     p.hD = V(0.18, 1.06 + 0.03 * ps, 0.30 + a * Math.cos(TAU * g)); p.ax = V(0.15, 0.55, 0.80); p.fc = V(0.7, 0.4, 0); p.th = 0;
@@ -367,9 +367,9 @@ export function poseFor(anim, ctx = {}) {
 }
 
 // ------------------------------------------------------------------ IK helpers
-function ik2(root, target, l1, l2, pole) {
+function ik2(root, target, l1, l2, pole, frac = 0.992) {
   let d = sub(target, root), dist = len(d);
-  const maxd = l1 + l2 - 0.004;
+  const maxd = (l1 + l2) * frac;
   if (dist > maxd) { target = add(root, mul(norm(d), maxd)); d = sub(target, root); dist = maxd; }
   if (dist < 0.05) dist = 0.05;
   const u = norm(d);
@@ -404,7 +404,7 @@ export function solve(P, hand = 'R') {
   // head
   const hf = frame(P.hy, P.hp, 0);
   const neckTop = add(neckBase, mul(norm(add(mul(chs.u, 0.4), mul(hf.u, 0.6))), 0.085));
-  const headC = add(add(neckTop, mul(hf.u, 0.095)), mul(hf.f, 0.012));
+  const headC = add(add(neckTop, mul(hf.u, 0.105)), mul(hf.f, 0.012));
   // shoulders (raise slightly when the arm goes overhead)
   const shBase = sub(neckBase, mul(chs.u, 0.045));
   let shR = add(shBase, mul(chs.r, B.shoulderHalf)), shL = sub(shBase, mul(chs.r, B.shoulderHalf));
@@ -428,7 +428,8 @@ export function solve(P, hand = 'R') {
     const up = clamp((w[1] - sh[1] + 0.05) / 0.4, 0, 1);
     return add(mul([out, 0, 0], 0.5 + up * 1.2), [0, -1 + 0.8 * up, -0.35 * (1 - up)]);
   };
-  const armR = ik2(shR, wristT, B.upperArm, B.foreArm, poleOf(shR, wristT, 1));
+  const upFrac = (w, sh) => 0.955 + 0.04 * clamp((w[1] - sh[1] - 0.15) / 0.5, 0, 1);
+  const armR = ik2(shR, wristT, B.upperArm, B.foreArm, poleOf(shR, wristT, 1), upFrac(wristT, shR));
   const wR = armR.end;
   const grip = add(wR, mul(ax, B.gripT - 0.01));
   const butt = sub(grip, mul(ax, B.gripT));
@@ -439,7 +440,7 @@ export function solve(P, hand = 'R') {
   const offDir = norm(sub(hOc, shL));
   const wristL = sub(hOc, mul(P.th > 0.5 ? ax : offDir, P.th > 0.5 ? B.gripT - 0.015 : 0.075));
   shL = add(shL, [0, raise(wristL), 0]);
-  const armL = ik2(shL, wristL, B.upperArm, B.foreArm, poleOf(shL, wristL, -1));
+  const armL = ik2(shL, wristL, B.upperArm, B.foreArm, poleOf(shL, wristL, -1), upFrac(wristL, shL));
   const wL = armL.end;
   const handLdir = P.th > 0.5 ? ax : norm(sub(wL, armL.mid));
   const handLc = P.th > 0.5 ? add(wL, mul(ax, B.gripT - 0.015)) : add(wL, mul(handLdir, 0.07));

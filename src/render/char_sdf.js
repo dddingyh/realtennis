@@ -15,8 +15,8 @@ function rampOf(c, kind) {
   const b = toRGB(c);
   const lightT = kind === 'skin' ? [255, 226, 190] : [255, 246, 222];
   const mixc = (a, t, k) => [a[0] + (t[0] - a[0]) * k, a[1] + (t[1] - a[1]) * k, a[2] + (t[2] - a[2]) * k];
-  const sh = kind === 'skin' ? [[0.50, 0.38, 0.50], [0.76, 0.66, 0.74], [0.38, 0.27, 0.34]] : [[0.50, 0.50, 0.70], [0.76, 0.77, 0.90], [0.30, 0.31, 0.46]];
-  return [pack(mulc(b, sh[0])), pack(mulc(b, sh[1])), c, pack(mixc(b, lightT, kind === 'skin' ? 0.30 : 0.34)), pack(mulc(b, sh[2]))];
+  const sh = kind === 'skin' ? [[0.50, 0.38, 0.50], [0.76, 0.66, 0.74], [0.38, 0.27, 0.34]] : [[0.46, 0.46, 0.68], [0.72, 0.73, 0.88], [0.28, 0.29, 0.44]];
+  return [pack(mulc(b, sh[0])), pack(mulc(b, sh[1])), c, pack(mixc(b, lightT, kind === 'skin' ? 0.32 : 0.38)), pack(mulc(b, sh[2]))];
 }
 export function makePalette(look) {
   const P = new Array(256).fill(null);
@@ -170,6 +170,7 @@ export function marchModel(model, s, look, opts = {}) {
   const head = hd;
   const band = !!look.headband;
   const showEyes = !opts.noEyes;
+  const small = !!opts.small;
   const sleeveP = []; // cache for sleeve axis
   const inv = 1 / s;
   const bcx = bc;
@@ -265,14 +266,14 @@ export function marchModel(model, s, look, opts = {}) {
         const second = M.D[o + 6] === 0.059; // second segment (c30 -> ankle)
         const along = second ? 0.30 + 0.70 * tt : 0.30 * tt;
         if (along > 0.58) m = MAT.SOCK;
-        else if (along > 0.53) m = MAT.TRIM;
+        else if (along > 0.53 && !small) m = MAT.TRIM;
       } else if (hk === HOOK.SHORTS) {
         // hem trim on the flared leg of the shorts
         const o = pi * 22;
         if (M.type[pi] === 0) {
           const bax = M.D[o + 3], bay = M.D[o + 4], baz = M.D[o + 5];
           const tt = ((px - M.D[o]) * bax + (py - M.D[o + 1]) * bay + (pz - M.D[o + 2]) * baz) * M.D[o + 10];
-          if (tt > 0.93) m = MAT.TRIM;
+          if (tt > 0.93 && !small) m = MAT.TRIM;
         }
       } else if (hk === HOOK.SHIRT) {
         // crew collar
@@ -285,10 +286,9 @@ export function marchModel(model, s, look, opts = {}) {
       // ambient occlusion by sampling the field along the normal
       const ao = sdfSet(M, loc, nl_, px + Nx * 0.05, py + Ny * 0.05, pz + Nz * 0.05) / 0.05;
       let tn = l > 0.74 ? 3 : l > 0.26 ? 2 : l > -0.20 ? 1 : 0;
-      if (ao < 0.55 && tn > 0) tn--;
-      if (ao < 0.30 && tn > 0) tn--;
+      if (!small) { if (ao < 0.55 && tn > 0) tn--; if (ao < 0.30 && tn > 0) tn--; }
       // soft rim on the light-facing silhouette
-      if (Nz > -0.30 && Nx < -0.25 && l > 0.1 && tn < 3) tn = Math.min(3, tn + 1);
+      if (!small && Nz > -0.30 && Nx < -0.25 && l > 0.1 && tn < 3) tn = Math.min(3, tn + 1);
       matB[idx] = m; tone[idx] = tn; dep[idx] = t;
     }
   }

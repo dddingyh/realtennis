@@ -18,7 +18,7 @@ const lerpV = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, 
 // camera: view = (right, up, forward) basis in character space
 export function viewBasis(role) {
   // near player: we look at the back, camera pitched down by `pitch`
-  const pitch = role === 'near' ? 0.42 : 0.24;
+  const pitch = role === 'near' ? 0.48 : 0.24;
   const c = Math.cos(pitch), s = Math.sin(pitch);
   if (role === 'near') return { R: [1, 0, 0], U: [0, c, s], F: [0, -s, c], pitch };
   return { R: [-1, 0, 0], U: [0, c, -s], F: [0, -s, -c], pitch };
@@ -30,7 +30,7 @@ export function buildModel(J, look, role, s) {
   const prims = [];
   const K = 0.032; // smooth-union radius for organic joints
   const small = s < 26;
-  const hs = small ? 1.10 : 1.0; // slightly oversized head at the small (far) size so it reads
+  const hs = small ? 1.16 : 1.07; // slightly oversized head at the small (far) size so it reads
 
   const cone = (m, a, b, ra, rb, k = K, hook = 0) => { prims.push({ t: 0, m, a: TP(a), b: TP(b), ra, rb, k, hook }); };
   const ell = (m, c, u, v, w, ru, rv, rw, k = K, hook = 0) => { prims.push({ t: 1, m, c: TP(c), u: TP(u), v: TP(v), w: TP(w), ru, rv, rw, k, hook }); };
@@ -40,16 +40,16 @@ export function buildModel(J, look, role, s) {
   const pel = J.pelvis, chs = J.chest;
   const midR = norm(lerpV(pel.r, chs.r, 0.5)), midU = norm(lerpV(pel.u, chs.u, 0.5)), midF = norm(cross(midR, midU));
   ell(MAT.SHORTS, add(J.hip, mul(pel.u, 0.025)), pel.r, pel.u, pel.f, 0.160, 0.105, 0.112, K, HOOK.SHORTS);
-  ell(MAT.SHIRT, add(J.hip, mul(midU, 0.205)), midR, midU, midF, 0.138, 0.15, 0.098, 0.05, HOOK.SHIRT);
-  ell(MAT.SHIRT, J.chestC, chs.r, chs.u, chs.f, 0.178, 0.175, 0.118, 0.05, HOOK.SHIRT);
+  ell(MAT.SHIRT, add(J.hip, mul(midU, 0.205)), midR, midU, midF, 0.130, 0.15, 0.096, 0.05, HOOK.SHIRT);
+  ell(MAT.SHIRT, J.chestC, chs.r, chs.u, chs.f, 0.172, 0.175, 0.116, 0.05, HOOK.SHIRT);
   ell(MAT.SHIRT, add(add(J.neckBase, mul(chs.u, -0.11)), mul(chs.f, -0.018)), chs.r, chs.u, chs.f, 0.172, 0.10, 0.10, 0.05, HOOK.SHIRT);
   // trapezius slope + deltoid caps
   for (const sh of [J.shR, J.shL]) {
     cone(MAT.SHIRT, add(J.neckBase, mul(chs.u, 0.0)), sh, 0.050, 0.060, 0.05, HOOK.SHIRT);
-    ell(MAT.SHIRT, sh, chs.r, chs.u, chs.f, 0.064, 0.066, 0.062, 0.04, HOOK.SHIRT);
+    ell(MAT.SHIRT, sh, chs.r, chs.u, chs.f, 0.060, 0.062, 0.058, 0.04, HOOK.SHIRT);
   }
   // neck
-  cone(MAT.SKIN, sub(J.neckBase, mul(chs.u, 0.03)), J.neckTop, 0.057, 0.050, 0.04);
+  cone(MAT.SKIN, sub(J.neckBase, mul(chs.u, 0.03)), J.neckTop, 0.054, 0.048, 0.04);
 
   // ---------------- head ----------------
   const hd = J.head, hc = J.headC;
@@ -57,7 +57,7 @@ export function buildModel(J, look, role, s) {
   ell(MAT.SKIN, hc, hd.r, hd.u, hd.f, 0.078 * hr, 0.102 * hr, 0.092 * hr, 0.02, HOOK.HEAD);
   ell(MAT.SKIN, add(add(hc, mul(hd.u, -0.056 * hr)), mul(hd.f, 0.020 * hr)), hd.r, hd.u, hd.f, 0.060 * hr, 0.058 * hr, 0.062 * hr, 0.03, HOOK.HEAD);
   ell(MAT.HAIR, add(add(hc, mul(hd.u, 0.014 * hr)), mul(hd.f, -0.017 * hr)), hd.r, hd.u, hd.f, 0.085 * hr, 0.104 * hr, 0.099 * hr, 0.02, HOOK.HEAD);
-  ell(MAT.HAIR, add(add(hc, mul(hd.u, -0.020 * hr)), mul(hd.f, -0.050 * hr)), hd.r, hd.u, hd.f, 0.068 * hr, 0.066 * hr, 0.055 * hr, 0.03, HOOK.HEAD);
+  ell(MAT.HAIR, add(add(hc, mul(hd.u, -0.002 * hr)), mul(hd.f, -0.050 * hr)), hd.r, hd.u, hd.f, 0.066 * hr, 0.060 * hr, 0.055 * hr, 0.03, HOOK.HEAD);
 
   // ---------------- arms ----------------
   const arm = (sh, el, wr, handC, handDir, gripping, dominant) => {
@@ -67,7 +67,7 @@ export function buildModel(J, look, role, s) {
     cone(MAT.SKIN, el, f30, 0.041, 0.046);
     cone(MAT.SKIN, f30, wr, 0.046, 0.031);
     // short sleeve with hem trim
-    cone(MAT.SHIRT, sh, lerpV(sh, el, 0.56), 0.068, 0.062, 0.03, HOOK.SLEEVE);
+    cone(MAT.SHIRT, sh, lerpV(sh, el, 0.56), 0.064, 0.058, 0.03, HOOK.SLEEVE);
     // wristband
     cone(MAT.BAND, lerpV(wr, el, 0.02), lerpV(wr, el, 0.17), 0.037, 0.039, 0.0);
     // hand
@@ -87,20 +87,20 @@ export function buildModel(J, look, role, s) {
   // ---------------- legs ----------------
   const leg = (hj, kn, an, ft) => {
     const t40 = lerpV(hj, kn, 0.42);
-    cone(MAT.SKIN, hj, t40, 0.090, 0.080);
-    cone(MAT.SKIN, t40, kn, 0.080, 0.056);
+    cone(MAT.SKIN, hj, t40, 0.092, 0.084);
+    cone(MAT.SKIN, t40, kn, 0.084, 0.057);
     ell(MAT.SKIN, kn, [1, 0, 0], [0, 1, 0], [0, 0, 1], 0.054, 0.054, 0.054, 0.03);
-    cone(MAT.SHORTS, hj, lerpV(hj, kn, 0.60), 0.098, 0.099, 0.02, HOOK.SHORTS);
+    cone(MAT.SHORTS, hj, lerpV(hj, kn, 0.60), 0.100, 0.103, 0.02, HOOK.SHORTS);
     const c30 = lerpV(kn, an, 0.30);
     cone(MAT.SKIN, kn, c30, 0.054, 0.059, K, HOOK.SHIN);
     cone(MAT.SKIN, c30, an, 0.059, 0.036, K, HOOK.SHIN);
     // shoe: chunky upper, light sole, collar
     const fw = ft.dir;
     const heel = add(add(an, mul(fw, -0.052)), [0, -0.030, 0]);
-    const toe = add(add(an, mul(fw, 0.140)), [0, -0.040 + 0.0, 0]);
-    cone(MAT.SHOE, heel, toe, 0.046, 0.041, 0.03);
-    cone(MAT.SOLE, add(heel, [0, -0.027, 0]), add(toe, [0, -0.027, 0]), 0.031, 0.029, 0.0);
-    cone(MAT.SHOE, add(an, [0, -0.01, 0]), add(an, [0, 0.025, 0]), 0.043, 0.041, 0.03);
+    const toe = add(add(an, mul(fw, 0.150)), [0, -0.040, 0]);
+    cone(MAT.SHOE, heel, toe, 0.050, 0.045, 0.03);
+    cone(MAT.SOLE, add(heel, [0, -0.030, 0]), add(toe, [0, -0.030, 0]), 0.036, 0.033, 0.0);
+    cone(MAT.SHOE, add(an, [0, -0.01, 0]), add(an, [0, 0.03, 0]), 0.047, 0.044, 0.03);
     // laces / tongue
     const ins = add(add(an, mul(fw, 0.065)), [0, 0.012, 0]);
     cone(MAT.LACE, add(an, mul(fw, 0.03)), ins, 0.020, 0.022, 0.0);

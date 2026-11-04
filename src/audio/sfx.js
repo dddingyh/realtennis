@@ -185,7 +185,7 @@ export class Sfx {
     let calledOut = false;
     for (const e of events) {
       switch (e.type) {
-        case 'hit': this.hit(e); break;
+        case 'hit': if (!e.serve) this.hit(e); break;
         case 'serve': this.hit({ ...e, type: 'serve', shot: 'smash', power: 0.95, pos: e.pos, quality: 0.8 }); break;
         case 'bounce': this.bounce(e); break;
         case 'net': this.net(e); this.ooh(); break;
