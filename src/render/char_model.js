@@ -42,7 +42,7 @@ export function viewBasis(role) {
 }
 
 // detail level from pixel size
-export function lodOf(s) { return s >= 40 ? 2 : s >= 22 ? 1 : 0; }
+export function lodOf(s) { return s >= 34 ? 2 : s >= 20 ? 1 : 0; }
 
 export function buildModel(J, look, role, s, opt = {}) {
   const { R, U, F } = viewBasis(role);

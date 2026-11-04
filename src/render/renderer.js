@@ -6,6 +6,10 @@ import { renderNetLayer, drawStaticPeople } from './props.js';
 import { Crowd } from './crowd.js';
 import { SpriteFactory } from './sprites.js';
 import { ellipseSpans, hex, css, rgba } from './raster.js';
+import { viewBasis } from './char_model.js';
+import { dribble, tossHand, serveTime } from '../game/serve_choreo.js';
+
+const SPRITE_PHASE_Q = 48;   // sprites.js quantises serve phases to 1/48
 
 const W = RENDER.width, H = RENDER.height;
 // ball pixel diameter range scales with resolution (360p: 1-4 px, 540p: 2-5 px)
@@ -103,7 +107,7 @@ export class Renderer {
     for (const it of items) {
       if (it.kind === 'net') ctx.drawImage(this.netLayer, 0, 0);
       else if (it.kind === 'player') this.drawPlayer(ctx, state, it.i, dt, time);
-      else this.drawBall(ctx, b, dt);
+      else this.drawBall(ctx, b, dt, state);
     }
     // particles (dust) in front of everything on the ground plane
     this.drawParticles(ctx, dt);
@@ -111,21 +115,56 @@ export class Renderer {
     return this.canvas;
   }
 
-  drawPlayer(ctx, state, i, dt, time) {
-    const pl = state.players[i];
+  // sprite placement for player i: feet anchor on screen + sprite pixels per metre
+  spriteXform(pl, i) {
     const role = i === 0 ? 'near' : 'far';
-    this.sprites.updateRun(i, pl, dt);
     const p = camera.project(pl.pos.x, 0, pl.pos.z);
     const boost = role === 'near' ? 1.12 : 1.1;
     let s = Math.round((p.scale * boost) / 2) * 2;
     s = Math.max(14, s);
+    return { p, s, role };
+  }
+
+  drawPlayer(ctx, state, i, dt, time) {
+    let pl = state.players[i];
+    this.sprites.updateRun(i, pl, dt);
+    const { p, s, role } = this.spriteXform(pl, i);
+    // the pre-serve ball bounce is rendered through the serve sprite path (pose.js: serve + shot 'bounce')
+    if (pl.anim && pl.anim.name === 'bounce') pl = { ...pl, anim: { ...pl.anim, name: 'serve', shot: 'bounce' } };
     const f = this.sprites.get(i, pl, role, s, time);
     const x = Math.round(p.sx - f.ax), y = Math.round(p.sy - f.ay);
     ctx.drawImage(f.canvas, x, y);
   }
 
-  drawBall(ctx, b, dt) {
+  // Ball screen position. While the ball is attached to a server (held / bounced / tossed, and a few frames after
+  // contact) it is mapped with the same transform as the server's sprite, and a held ball is placed at the tossing
+  // hand of the exact (quantised) pose the sprite shows, so hand and ball always coincide on screen.
+  ballScreen(b, state) {
     const p = camera.project(b.pos.x, b.pos.y, b.pos.z);
+    const at = b.attach;
+    if (!at || !state || !(at.k > 0)) return p;
+    const pl = state.players[at.i];
+    if (!pl) return p;
+    const { p: fp, s, role } = this.spriteXform(pl, at.i);
+    const { R, U } = viewBasis(role);
+    const mir = pl.hand === 'L' ? -1 : 1;
+    let c;
+    const a = pl.anim || {};
+    if (at.held && (a.name === 'bounce' || a.name === 'serve')) {
+      const q = Math.round(Math.max(0, Math.min(1, a.phase || 0)) * SPRITE_PHASE_Q) / SPRITE_PHASE_Q;
+      const h = a.name === 'bounce' ? dribble(q).hand : tossHand(a.shot || 'flat', serveTime(q));
+      c = [mir * h[0], h[1], h[2]];
+    } else {
+      c = [pl.facing * (b.pos.x - pl.pos.x), b.pos.y, -pl.facing * (b.pos.z - pl.pos.z)];
+    }
+    const sx = fp.sx + (c[0] * R[0] + c[1] * R[1] + c[2] * R[2]) * s;
+    const sy = fp.sy - (c[0] * U[0] + c[1] * U[1] + c[2] * U[2]) * s;
+    const k = at.k;
+    return { sx: p.sx + (sx - p.sx) * k, sy: p.sy + (sy - p.sy) * k, scale: p.scale, depth: p.depth };
+  }
+
+  drawBall(ctx, b, dt, state) {
+    const p = this.ballScreen(b, state);
     const sp = Math.hypot(b.vel.x, b.vel.y, b.vel.z);
     // trail history (render-frame samples)
     this.trail.push({ x: p.sx, y: p.sy, t: 0 });

@@ -300,7 +300,16 @@ export function marchModel(model, s, look, opts = {}) {
           specK = 0.97;
           break;
         }
-        case HOOK.HAIR: specK = 0.90; break;
+        case HOOK.HAIR: {
+          // clumped strands flowing from the crown: break up the highlight into locks
+          const qx = px - hd.c[0], qy = py - hd.c[1], qz = pz - hd.c[2];
+          const lu = (qx * hd.u[0] + qy * hd.u[1] + qz * hd.u[2]) / hd.ru;
+          const lv = (qx * hd.v[0] + qy * hd.v[1] + qz * hd.v[2]) / hd.rv;
+          const lw = (qx * hd.w[0] + qy * hd.w[1] + qz * hd.w[2]) / hd.rw;
+          if (lod >= 1) dl = 0.20 * Math.sin(Math.atan2(lu, lw) * 7 + lv * 4.5) * Math.min(1, 1.2 - lv * 0.5);
+          specK = 0.90;
+          break;
+        }
         case HOOK.SLEEVE: {
           const tt = ((px - ex.a[0]) * ex.d[0] + (py - ex.a[1]) * ex.d[1] + (pz - ex.a[2]) * ex.d[2]) / ex.L;
           if (tt > 0.86) m = MAT.TRIM; else if (tt > 0.80 && lod === 2) dTone = -1;

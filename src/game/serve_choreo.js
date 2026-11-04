@@ -101,11 +101,11 @@ function keyed(keys, t) {
 
 // ------------------------------------------------------------------ hand rest / ball-bounce routine
 /** Rest position of the tossing hand with the ball (local == root before the motion). Serve phase 0 starts here. */
-export const HAND_REST = [-0.16, 0.95, 0.46];
+export const HAND_REST = [-0.16, 1.00, 0.46];
 // the hand/ball centre sits this far above the palm centre used by the IK
 export const PALM_BELOW_BALL = 0.045;
 
-const DR = { period: 0.80, push: 0.16, releaseY: 0.78, impact: 5.3, cor: 0.76 };
+const DR = { period: 0.80, push: 0.16, releaseY: 0.88, impact: 5.5, cor: 0.76 };
 (() => {
   const h = DR.releaseY - BALL_R;
   DR.v0 = Math.sqrt(DR.impact * DR.impact - 2 * G * h);
@@ -138,7 +138,7 @@ export function dribble(u) {
     if (s < DR.tf) { by = y1 - DR.v0 * s - 0.5 * G * s * s; bv = -DR.v0 - G * s; }
     else { const r = s - DR.tf; by = BALL_R + DR.vr * r - 0.5 * G * r * r; bv = DR.vr - G * r; }
     const k = (t - DR.tRel) / (DR.tCatch - DR.tRel);
-    hy = y1 - 0.09 * Math.sin(Math.PI * k);            // follow-through down, back up for the catch
+    hy = y1 - 0.05 * Math.sin(Math.PI * k);            // follow-through down, back up for the catch
   } else {                                              // catch and carry back to rest
     const s = t - DR.tCatch, T = DR.period - DR.tCatch;
     const p = hermite([0, y1, 0], [0, DR.vc, 0], [0, yr, 0], [0, 0, 0], T, s);
@@ -172,7 +172,7 @@ export function tossHand(type, t) {
   const { R } = TOSS[tossType(type)];
   const V = tossVelocity(type);
   if (t <= SERVE_T.release) {
-    return keyed([[0, HAND_REST], [SERVE_T.drop, [-0.12, 0.80, 0.36]], [SERVE_T.release, R, V]], t);
+    return keyed([[0, HAND_REST], [SERVE_T.drop, [-0.12, 0.94, 0.40]], [SERVE_T.release, R, V]], t);
   }
   const ro = rootOffset(t);
   const k = keyed([

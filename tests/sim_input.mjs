@@ -3,6 +3,7 @@ import { Simulation } from '../src/game/simulation.js';
 import { attachKeyboard, KEYBOARD_HELP, powerFromHold } from '../src/input/keyboard.js';
 import { contactGeometry } from '../src/game/shot.js';
 import { PLAYER } from '../src/game/player.js';
+import { SERVE_T } from '../src/game/serve_choreo.js';
 
 let failed = 0, passed = 0;
 function check(name, cond, info = '') {
@@ -39,9 +40,10 @@ console.log('keyboard');
   for (let i = 0; i < 1200 && !sim2.canServe(0); i++) sim2.step(1 / 120);
   check('human server is ready', sim2.canServe(0) && sim2.state.hint.canServe === true && /发球/.test(sim2.state.hint.text), sim2.state.hint.text);
   key(t2, 'keydown', 'Space');
-  check('Space keydown tosses the ball', sim2.state.match.phase === 'serving' && sim2.state.ball.pos.y > 1);
-  run(sim2, 0.62);
-  check('hint shows toss timing', sim2.state.hint.contactIn !== null && sim2.state.hint.contactIn < 0.1, String(sim2.state.hint.contactIn));
+  for (let i = 0; i < 120 && sim2.state.match.phase !== 'serving'; i++) sim2.step(1 / 120);   // finishes the current ball bounce first
+  check('Space keydown starts the serve motion (after the ball is back in the hand)', sim2.state.match.phase === 'serving' && sim2.toss && sim2.toss.type === 'flat');
+  run(sim2, SERVE_T.contact - 0.01);
+  check('hint shows toss timing', sim2.state.hint.contactIn !== null && sim2.state.hint.contactIn < 0.06, String(sim2.state.hint.contactIn));
   key(t2, 'keyup', 'Space');
   const ev = sim2.drainEvents();
   const sv = ev.find((e) => e.type === 'serve');
@@ -50,7 +52,9 @@ console.log('keyboard');
   run(sim2, 3);
   for (let i = 0; i < 2400 && !(sim2.state.match.phase === 'serve-prep' && sim2.canServe(sim2.state.match.server)); i++) sim2.step(1 / 120);
   if (sim2.state.match.server === 0) {
-    key(t2, 'keydown', 'KeyJ'); run(sim2, 0.62); key(t2, 'keyup', 'KeyJ');
+    key(t2, 'keydown', 'KeyJ');
+    for (let i = 0; i < 120 && sim2.state.match.phase !== 'serving'; i++) sim2.step(1 / 120);
+    run(sim2, SERVE_T.contact - 0.01); key(t2, 'keyup', 'KeyJ');
     const e2 = sim2.drainEvents().find((e) => e.type === 'serve');
     check('shot key also serves (kick serve with J)', !!e2 && sim2.lastShot.serveType === 'topspin', e2 && f(e2.speedKmh, 0) + ' km/h');
   } else check('(second serve scenario skipped: receiver now serving)', true);

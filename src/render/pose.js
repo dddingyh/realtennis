@@ -6,6 +6,7 @@
 //
 //   poseFor(anim, ctx) -> P   (plain parameter object)
 //   solve(P, hand)     -> J   (joint positions, frames and racket pose; consumed by char_model.js)
+import { SERVE_T, TOSS, serveTime, tossHand, contactPoint, rootOffset, dribble, PALM_BELOW_BALL } from '../game/serve_choreo.js';
 const TAU = Math.PI * 2;
 export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -216,21 +217,75 @@ const SMASH = track([
   K(1.0, {}),
 ]);
 
-// ------------------------------------------------------------------ serve
-// 0 stance, 0.3 toss, 0.5 trophy, 0.65 contact, 1 finish
-const SV_FEET = { fL: V(-0.16, 0, 0.22), fR: V(0.30, 0, -0.20), fLy: 0.75, fRy: 1.45 };
+// ------------------------------------------------------------------ serve + pre-serve ball bounce
+// Timeline, toss-hand path and contact points come from src/game/serve_choreo.js (single source of truth shared with
+// the simulation). Phases: 0 setup, 0.12 arms drop, 0.30 toss release, 0.50 trophy (ball apex), 0.57 racket drop,
+// 0.65 contact (airborne, full extension), 0.76 landing on the front foot inside the baseline, 0.88 finish across the
+// body, 1 recovery. Feet/hips are root-relative (the sim moves the root forward during the jump).
+// Side-on stance: lead (left) foot near the baseline pointing at the right net post, back foot parallel to the baseline.
+const SV_FEET = { fL: V(-0.12, 0, 0.25), fR: V(0.30, 0, -0.22), fLy: 0.85, fRy: 1.50 };
+const SV_SET = {
+  ...SV_FEET, py: 0.85, cy: 0.95, hip: V(0.02, 0.89, -0.02), lean: 0.12, side: 0, hy: 0.35, hp: 0.12,
+  hD: V(0.02, 1.00, 0.40), ax: V(-0.15, 0.30, 0.94), fc: V(0.9, 0.3, 0), th: 0, offT: 0.2,
+};
 const SERVE = track([
-  K(0.0, { ...SV_FEET, py: 0.85, cy: 1.05, hip: V(0.0, 0.90, -0.02), lean: 0.14, hD: V(0.14, 1.02, 0.34), ax: V(0.05, 0.25, 0.97), fc: V(1, 0, 0), hO: V(0.0, 1.08, 0.36), th: 1, offT: 0.20, hy: 0.55, hp: 0.10 }),
-  K(0.12, { ...SV_FEET, py: 0.90, cy: 1.10, hip: V(0.02, 0.88, -0.02), lean: 0.12, hD: V(0.22, 0.96, 0.10), ax: V(0.08, -0.30, 0.95), fc: V(1, 0, 0), hO: V(-0.06, 1.12, 0.34), th: 0.3, hy: 0.55, hp: 0.0 }),
-  K(0.22, { ...SV_FEET, py: 0.92, cy: 1.15, hip: V(0.03, 0.84, -0.04), lean: 0.08, hD: V(0.30, 1.02, -0.18), ax: V(0.05, -0.70, -0.70), fc: V(1, 0, 0), hO: V(-0.08, 1.60, 0.34), th: 0, hy: 0.55, hp: -0.30 }),
-  K(0.34, { ...SV_FEET, py: 0.95, cy: 1.20, hip: V(0.04, 0.78, -0.06), lean: 0.0, hD: V(0.36, 1.38, -0.22), ax: V(0.05, 0.30, -0.95), fc: V(1, 0, 0), hO: V(-0.10, 2.02, 0.36), th: 0, hy: 0.55, hp: -0.55 }),
-  K(0.50, { ...SV_FEET, fL: V(-0.16, 0, 0.22), py: 0.90, cy: 1.18, hip: V(0.04, 0.70, -0.10), lean: -0.16, hD: V(0.34, 1.60, -0.22), ax: V(0.0, 0.95, -0.28), fc: V(1, 0, 0.1), hO: V(-0.10, 2.14, 0.38), th: 0, hy: 0.55, hp: -0.80 }),
-  K(0.57, { ...SV_FEET, py: 0.80, cy: 1.00, hip: V(0.04, 0.72, -0.08), lean: -0.20, hD: V(0.28, 1.70, -0.30), ax: V(0.05, -0.55, -0.80), fc: V(1, 0, 0.1), hO: V(-0.12, 1.84, 0.40), th: 0, hy: 0.55, hp: -0.80 }),
-  K(0.65, { fL: V(-0.14, 0.34, 0.26), fR: V(0.22, 0.30, -0.14), fLp: 0.4, fRp: 0.5, fLy: 0.7, fRy: 1.0, py: 0.25, cy: 0.35, hip: V(0.02, 1.02, 0.08), lean: 0.06, hD: V(0.16, 2.26, 0.34), ax: V(0.02, 0.99, 0.12), fc: V(0, 0.15, 1), hO: V(-0.24, 1.50, 0.34), th: 0, hy: 0.2, hp: -0.75 }),
-  K(0.76, { fL: V(-0.16, 0.20, 0.46), fR: V(0.24, 0.16, 0.20), fLp: 0.3, fRp: 0.6, fLy: 0.4, fRy: 0.3, py: -0.35, cy: -0.35, hip: V(0.0, 0.94, 0.26), lean: 0.30, hD: V(0.0, 1.55, 0.50), ax: V(-0.45, -0.55, 0.70), fc: V(-0.2, 0.5, 0.8), hO: V(-0.26, 1.30, 0.28), th: 0, hy: 0.0, hp: 0.1 }),
-  K(0.88, { fL: V(-0.2, 0, 0.44), fLy: 0.2, fR: V(0.22, 0.08, 0.42), fRp: 0.5, fRy: 0.1, py: -0.50, cy: -0.55, hip: V(-0.02, 0.80, 0.30), lean: 0.34, hD: V(-0.12, 1.10, 0.44), ax: V(-0.60, -0.80, 0.05), fc: V(-0.2, 0.5, 0.6), hO: V(-0.28, 1.14, 0.30), th: 0.3, hy: 0.0, hp: 0.1 }),
-  K(1.0, { fL: V(-0.3, 0, 0.40), fR: V(0.30, 0, 0.30), fLy: 0.0, fRy: 0.0, py: -0.2, cy: -0.25, hip: V(0, 0.84, 0.30), lean: 0.30, hD: V(0.06, 1.0, 0.46), ax: V(-0.20, -0.45, 0.80), fc: V(1, 0, 0), hO: V(-0.1, 1.0, 0.4), th: 0.5 }),
+  K(0.0, SV_SET),
+  // both arms drop together, weight onto the back foot
+  K(0.12, { ...SV_SET, hip: V(0.04, 0.87, -0.04), lean: 0.14, hD: V(0.30, 0.82, 0.06), ax: V(0.20, -0.45, 0.87), fc: V(0.9, 0.2, 0.3), hy: 0.40 }),
+  // toss release: tossing arm fully extended, racket arm swinging back and up, knees start to flex
+  K(0.30, { ...SV_SET, py: 0.95, cy: 1.15, hip: V(0.03, 0.82, 0.02), lean: -0.02, side: 0.06, hD: V(0.44, 1.12, -0.30), ax: V(0.20, -0.30, -0.93), fc: V(0.9, 0, 0.2), hy: 0.45, hp: -0.25 }),
+  K(0.42, { ...SV_SET, fRp: 0.15, py: 0.95, cy: 1.20, hip: V(0.04, 0.74, 0.04), lean: -0.14, side: 0.10, hD: V(0.42, 1.48, -0.28), ax: V(0.10, 0.75, -0.65), fc: V(0.9, 0, 0.2), hy: 0.45, hp: -0.55 }),
+  // trophy: deep knee bend, back arched, racket up behind the head, tossing arm pointing at the ball
+  K(0.50, { ...SV_SET, fRp: 0.35, py: 0.90, cy: 1.20, hip: V(0.06, 0.68, 0.04), lean: -0.24, side: 0.14, hD: V(0.36, 1.62, -0.22), ax: V(0.05, 0.96, -0.25), fc: V(0.95, 0, 0.1), hy: 0.45, hp: -0.75 }),
+  // racket drop behind the back while the legs drive up
+  K(0.57, { ...SV_SET, fRp: 0.55, fR: V(0.26, 0.02, -0.18), py: 0.70, cy: 0.95, hip: V(0.05, 0.84, 0.06), lean: -0.18, side: 0.10, hD: V(0.30, 1.56, -0.28), ax: V(0.10, -0.80, -0.58), fc: V(0.95, 0, 0.1), hy: 0.40, hp: -0.80 }),
+  K(0.62, { fL: V(-0.12, 0.10, 0.25), fR: V(0.22, 0.14, -0.18), fLp: 0.6, fRp: 0.8, fLy: 0.7, fRy: 1.2, py: 0.45, cy: 0.55, hip: V(0.04, 1.06, 0.08), lean: -0.02, side: 0.0, hD: V(0.26, 2.00, 0.02), ax: V(0.05, 0.70, -0.70), fc: V(0.6, 0.2, 0.7), th: 0, hy: 0.25, hp: -0.85 }),
+  // contact: airborne at full extension, chest square to the net, racket face toward the target
+  K(0.65, { fL: V(-0.10, 0.22, 0.10), fR: V(0.18, 0.24, -0.20), fLp: 0.9, fRp: 1.0, fLy: 0.5, fRy: 0.9, py: 0.25, cy: 0.20, hip: V(0.06, 1.23, 0.0), lean: 0.06, side: -0.06, hD: V(0.20, 2.40, 0.10), ax: V(0.00, 0.95, 0.30), fc: V(0, 0.15, 1), th: 0, hy: 0.15, hp: -0.80 }),
+  // pronation: racket face turns out, head swings down in front
+  K(0.70, { fL: V(-0.10, 0.12, 0.20), fR: V(0.20, 0.30, -0.30), fLp: 0.5, fRp: 1.1, fLy: 0.4, fRy: 0.6, py: 0.0, cy: -0.10, hip: V(0.02, 1.02, 0.06), lean: 0.30, side: -0.06, hD: V(0.20, 1.86, 0.42), ax: V(-0.20, 0.10, 0.97), fc: V(-0.7, 0.1, 0.7), th: 0, hy: 0.05, hp: -0.20 }),
+  // landing on the front (left) foot inside the baseline, back leg kicking up behind for balance
+  K(0.76, { fL: V(-0.10, 0, 0.12), fR: V(0.24, 0.30, -0.40), fLp: 0, fRp: 1.2, fLy: 0.25, fRy: 0.4, py: -0.15, cy: -0.40, hip: V(0.0, 0.84, 0.0), lean: 0.48, side: -0.04, hD: V(-0.04, 1.12, 0.48), ax: V(-0.70, -0.55, 0.45), fc: V(-0.4, 0.5, 0.5), th: 0, hy: 0.0, hp: 0.15 }),
+  // finish: racket across the body on the left side
+  K(0.88, { fL: V(-0.14, 0, 0.12), fR: V(0.24, 0.06, -0.10), fLy: 0.2, fRy: 0.4, fRp: 0.5, py: -0.25, cy: -0.60, hip: V(0.0, 0.84, 0.04), lean: 0.36, hD: V(-0.32, 0.98, 0.20), ax: V(-0.45, -0.55, -0.70), fc: V(-0.3, 0.6, 0.4), th: 0, hy: 0.0, hp: 0.15 }),
+  // recovery step: feet square, back toward the ready position
+  K(1.0, { fL: V(-0.30, 0, 0.06), fR: V(0.30, 0, -0.02), fLy: -0.1, fRy: 0.1, py: 0.0, cy: 0.05, hip: V(0, 0.82, -0.04), lean: 0.28, hD: V(0.12, 1.00, 0.38), ax: V(0.06, 0.52, 0.85), fc: V(0.75, 0.55, 0), th: 1, hy: 0, hp: 0.06 }),
 ]);
+// pre-serve ball bounce (one dribble per anim cycle); key 0/1 == serve phase 0 so the serve starts seamlessly
+const BOUNCE = track([
+  K(0.0, SV_SET),
+  K(0.16, { ...SV_SET, hip: V(0.02, 0.84, 0.0), lean: 0.36, hp: 0.35, hD: V(0.06, 0.92, 0.44) }),
+  K(0.45, { ...SV_SET, hip: V(0.02, 0.83, 0.0), lean: 0.40, hp: 0.50, hD: V(0.06, 0.90, 0.44) }),
+  K(0.74, { ...SV_SET, hip: V(0.02, 0.85, 0.0), lean: 0.34, hp: 0.35, hD: V(0.05, 0.94, 0.43) }),
+  K(1.0, SV_SET),
+]);
+const RACKET_HEAD = 0.30 + 0.1925 - BODY.gripT;     // grip point (hD) -> string-bed centre along the racket axis
+
+// serve pose for a toss type: keyframes + choreographed tossing hand + racket head exactly on the contact point
+function servePose(type, ph) {
+  const P = sample(SERVE, ph);
+  const t = serveTime(ph);
+  const h = tossHand(type, t);                           // ball centre while held, root frame (right-hander)
+  P.hO = V(h[0], h[1] - PALM_BELOW_BALL, h[2]);
+  // racket: pull the string bed onto the choreographed contact point around contact
+  const w = ph <= 0.585 || ph >= 0.715 ? 0 : ph <= 0.65 ? smooth((ph - 0.585) / 0.065) : 1 - smooth((ph - 0.65) / 0.065);
+  if (w > 0) {
+    const C = contactPoint(type), ro = rootOffset(SERVE_T.contact);
+    const ax = norm(P.ax);
+    const tgt = V(C[0] - ro[0] - ax[0] * RACKET_HEAD, C[1] - ro[1] - ax[1] * RACKET_HEAD, C[2] - ro[2] - ax[2] * RACKET_HEAD);
+    P.hD = lerpV(P.hD, tgt, w);
+    // shift the hips under the contact point a little (kick: more under the ball, slice: more to the side)
+    const dx = C[0] - TOSS.flat.C[0];
+    P.hip = V(P.hip[0] + 0.5 * dx * w, P.hip[1], P.hip[2] + 0.5 * (C[2] - TOSS.flat.C[2]) * w);
+  }
+  return P;
+}
+function bouncePose(ph) {
+  const P = sample(BOUNCE, ph);
+  const d = dribble(ph);
+  P.hO = V(d.hand[0], d.hand[1] - PALM_BELOW_BALL, d.hand[2]);
+  return P;
+}
 
 const STROKES = {
   'topspin|fh': FH_TOP, 'topspin|bh': BH_TOP, 'flat|fh': FH_FLAT, 'flat|bh': BH_FLAT,
@@ -298,7 +353,8 @@ export function poseFor(anim, ctx = {}) {
       const tr = STROKES[`${shot}|${side}`] || STROKES[`topspin|${side}`];
       return sample(tr, ph);
     }
-    case 'serve': return sample(SERVE, ph);
+    case 'serve': return anim.shot === 'bounce' ? bouncePose(ph) : servePose(anim.shot || 'flat', ph);
+    case 'bounce': return bouncePose(ph);
     case 'split': {
       const u = anim.phase == null ? 0.7 : ph; // 0..0.3 airborne hop, then wide landing
       const air = Math.sin(Math.PI * clamp(u / 0.3, 0, 1));
@@ -438,12 +494,22 @@ export function solve(P, hand = 'R') {
   const onRack = add(butt, mul(ax, P.offT));
   if (P.th > 0) hOc = lerpV(P.hO, onRack, P.th);
   const offDir = norm(sub(hOc, shL));
-  const wristL = sub(hOc, mul(P.th > 0.5 ? ax : offDir, P.th > 0.5 ? B.gripT - 0.015 : 0.075));
+  let wristL = sub(hOc, mul(P.th > 0.5 ? ax : offDir, P.th > 0.5 ? B.gripT - 0.015 : 0.075));
   shL = add(shL, [0, raise(wristL), 0]);
-  const armL = ik2(shL, wristL, B.upperArm, B.foreArm, poleOf(shL, wristL, -1), upFrac(wristL, shL));
-  const wL = armL.end;
-  const handLdir = P.th > 0.5 ? ax : norm(sub(wL, armL.mid));
-  const handLc = P.th > 0.5 ? add(wL, mul(ax, B.gripT - 0.015)) : add(wL, mul(handLdir, 0.07));
+  let armL = ik2(shL, wristL, B.upperArm, B.foreArm, poleOf(shL, wristL, -1), upFrac(wristL, shL));
+  let wL = armL.end;
+  let handLdir = P.th > 0.5 ? ax : norm(sub(wL, armL.mid));
+  let handLc = P.th > 0.5 ? add(wL, mul(ax, B.gripT - 0.015)) : add(wL, mul(handLdir, 0.07));
+  if (P.th <= 0.5) {
+    // free hand (e.g. the serve toss / ball bounce): iterate so that the HAND CENTRE lands on the target, not the wrist
+    for (let it = 0; it < 4; it++) {
+      const e = sub(hOc, handLc);
+      if (len(e) < 0.004) break;
+      wristL = add(wristL, e);
+      armL = ik2(shL, wristL, B.upperArm, B.foreArm, poleOf(shL, wristL, -1), upFrac(wristL, shL));
+      wL = armL.end; handLdir = norm(sub(wL, armL.mid)); handLc = add(wL, mul(handLdir, 0.07));
+    }
+  }
 
   const foot = (f, yaw, pitch, ank) => {
     const fw = [Math.sin(yaw), 0, Math.cos(yaw)];

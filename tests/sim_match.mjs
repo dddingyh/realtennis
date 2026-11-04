@@ -2,6 +2,7 @@
 import { Match } from '../src/game/match.js';
 import { Simulation } from '../src/game/simulation.js';
 import { COURT } from '../src/config.js';
+import { SERVE_T } from '../src/game/serve_choreo.js';
 
 let failed = 0, passed = 0;
 function check(name, cond, info = '') {
@@ -102,7 +103,7 @@ function startServe(sim, params = {}) {
   runUntil(sim, (s) => s.canServe(s.match.server), 8);
   const i = sim.match.server;
   sim.serveToss(i);
-  runUntil(sim, (s) => s.toss && s.toss.t >= 0.63, 3);
+  runUntil(sim, (s) => s.toss && s.toss.t >= SERVE_T.contact - 0.005, 4);
   sim.swing(i, { shot: 'flat', power: 0.8, aimX: 0, aimDepth: 0.3, source: 'keyboard', ...params });
   return i;
 }
