@@ -156,7 +156,9 @@ export class PhoneSim {
       jerk, trunc: truncate, jph: r.u() * 6.28,
       thl: 22 + r.n() * 8 * (1 + sloppy), zoff: r.n() * 0.04, ...extra };
     const fz = (side === 'fh' ? 1 : -1) * (this.flip ? -1 : 1);
-    const prep = r.range(0.9, 1.25), hold = r.range(0.08, 0.2);
+    // backswing duration: keep its peak angular speed (~1.875*angle/T for a min-jerk move) below ~280 deg/s
+    const backAngle = Math.hypot(90 - P.psi0, P.theta0, P.e0, P.thl - 30);
+    const prep = Math.max(r.range(0.9, 1.25), 1.875 * backAngle / 280), hold = r.range(0.08, 0.2);
     const Rn0 = toR(this.neutralGeom(this.hand === 'L'), this.flip ? -1 : 1);
     const gn0 = this.neutralGeom(this.hand === 'L');
     const g0 = swingGeometry(P, 0), g0m = mirrorGeo ? mirrorX(g0) : g0;

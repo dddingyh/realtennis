@@ -14,7 +14,7 @@ const N = +(q.get('n') || 10);
 const CW = +(q.get('w') || 1600);
 const look = { skin: '#e0a97c', hair: '#2a1d12', shirt: role === 'near' ? '#e23d3d' : '#f2c230', shorts: '#243a6a', shoes: '#f0f0f0', headband: role === 'far' ? '#ffffff' : null };
 if (q.get('shirt')) look.shirt = '#' + q.get('shirt');
-const f = new SpriteFactory(); f.autoWarm = false;
+const f = new SpriteFactory({ sync: true, exact: true }); f.autoWarm = false;
 const c = document.getElementById('c');
 const items = [];
 const PH = q.get('ph') ? q.get('ph').split(',').map(Number) : null;

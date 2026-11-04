@@ -12,7 +12,10 @@
 //   at rest reads +9.81 along world-up, W3C convention), rot:{alpha,beta,gamma} deg/s }.
 //   Device frame: x right of screen, y toward top of screen, z out of screen; omega = (beta, gamma, alpha).
 //
-// EVENTS: {type:'tilt', x, z}  and  {type:'swing', shot, side, power, conf, ts, feat}
+// EVENTS: {type:'tilt', x, z}  and  {type:'swing', shot, side, power, conf, ts, aimX, lift, spin, exec, speedDps, feat}
+//   analog fields (DESIGN.md 6.2): aimX -1..1 face direction at contact vs. ready-pose heading (+ = player's right;
+//   early contact = cross-court: R-fh/L-bh -> negative), lift 0..1 path elevation, spin -1 slice..+1 topspin,
+//   exec 0..1 motion quality (feat.ex holds the sub-scores), speedDps = peak |omega|.
 //   tilt x: +right, z: +toward camera (head tipped UP = back), z=-1 = head tipped down = toward net.
 //   swing.ts is the sample time (ms) of peak |omega| (= contact). Emitted ~decisionMs after contact.
 
@@ -65,6 +68,7 @@ export const DEFAULTS = Object.freeze({
   powerLoDps: 300, powerHiDps: 1200,
   tiltDeadDeg: 5, tiltFullDeg: 28, tiltSmoothMs: 120, tiltHoldMs: 300, tiltRateHz: 30,
   tiltFreezeDps: 120,
+  aimFullDeg: 30,      // face yaw (deg) at contact that maps to aimX = +-1
   accSign: 1,          // -1 for platforms whose accelerationIncludingGravity has inverted sign (older iOS)
   rotUnit: 'auto',     // 'deg' | 'rad' | 'auto'
 });
@@ -86,7 +90,8 @@ const USER_W = [1, 1, 0.7, 0.5, 0.5];
 export function createRecognizer(opts = {}) {
   const cfg = { ...DEFAULTS, ...opts };
   let hand = opts.hand === 'L' ? 'L' : 'R';
-  let calib = { v: 1, samples: { flat: [], topspin: [], slice: [], lob: [] } };
+  let calib = { v: 1, samples: { flat: [], topspin: [], slice: [], lob: [] }, aim: { fh: [], bh: [] } };
+  let neutralExplicit = false;        // neutral captured by calibrateNeutral (vs. the grip-convention default)
   let neutralUp = null;                // device-frame world-up at neutral
   let axes = null;                     // {a, r} device-frame head / right axes
   if (opts.calibration) loadCalibration(opts.calibration);
@@ -120,7 +125,8 @@ export function createRecognizer(opts = {}) {
   function loadCalibration(c) {
     if (!c) return;
     if (c.hand === 'L' || c.hand === 'R') hand = c.hand;
-    if (c.neutralUp) setNeutral(c.neutralUp);
+    if (c.neutralUp) { setNeutral(c.neutralUp); neutralExplicit = c.neutralExplicit !== false; }
+    if (c.aim) for (const k of ['fh', 'bh']) calib.aim[k] = (c.aim[k] || []).filter(Number.isFinite);
     if (c.samples) for (const k of Object.keys(calib.samples)) calib.samples[k] = (c.samples[k] || []).filter((v) => Array.isArray(v) && v.length === FEATURE_KEYS.length);
   }
 
@@ -165,6 +171,45 @@ export function createRecognizer(opts = {}) {
   }
 
   // ---------- feature extraction over the buffered window ----------
+  // Ready pose = last quiet sample before the backswing. Walk back from contact through the forward swing; once the
+  // opposite-direction yaw of the backswing has been seen, the next quiet sample is the ready pose. Without a visible
+  // backswing, the first quiet sample before the forward swing is used. Only gyro integration inside this
+  // ~0.5-1.5 s span matters for the heading, so yaw drift is negligible.
+  function findReady(ci, sgn) {
+    let phase = 0, backPeak = 0, firstQuiet = -1;
+    for (let i = ci; i >= 0; i--) {
+      const b = buf[i], y = (b.ww[2] / DEG) * sgn;
+      if (phase === 0) {                       // forward swing (+ pause at the top of the backswing)
+        if (y < -60) { phase = 1; backPeak = b.w; } else if (b.w < 80 && firstQuiet < 0) firstQuiet = i;
+      } else if (phase === 1) {                // inside the backswing, walking back towards its peak
+        if (b.w > backPeak) backPeak = b.w; else if (b.w < 0.6 * backPeak) phase = 2;
+      } else if (b.w < Math.max(40, 0.15 * backPeak)) return { b, how: 'ready' };   // start of the backswing
+    }
+    if (phase > 0) return { b: buf[0], how: 'buffer-start' };
+    return firstQuiet >= 0 ? { b: buf[firstQuiet], how: 'no-backswing' } : null;
+  }
+  // residual RMS of y against a local quadratic fit over +-halfMs (sample-rate independent smoothness measure)
+  function quadResidual(ts, ys, i0, i1, halfMs) {
+    let ss = 0, n = 0;
+    for (let i = i0; i <= i1; i++) {
+      let S0 = 0, S1 = 0, S2 = 0, S3 = 0, S4 = 0, T0 = 0, T1 = 0, T2 = 0;
+      for (let j = 0; j < ts.length; j++) {
+        const x = (ts[j] - ts[i]) / halfMs;
+        if (Math.abs(x) > 1) continue;
+        const y = ys[j], x2 = x * x;
+        S0++; S1 += x; S2 += x2; S3 += x2 * x; S4 += x2 * x2; T0 += y; T1 += x * y; T2 += x2 * y;
+      }
+      if (S0 < 4) continue;
+      // solve 3x3 normal equations for y ~ c0 + c1 x + c2 x^2, evaluate at x=0 -> c0
+      const M = [[S0, S1, S2], [S1, S2, S3], [S2, S3, S4]], r = [T0, T1, T2];
+      const det = (m) => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+      const d = det(M); if (Math.abs(d) < 1e-9) continue;
+      const c0 = det([[r[0], M[0][1], M[0][2]], [r[1], M[1][1], M[1][2]], [r[2], M[2][1], M[2][2]]]) / d;
+      ss += (ys[i] - c0) ** 2; n++;
+    }
+    return n ? Math.sqrt(ss / n) : 0;
+  }
+
   function features(startIdx, ci) {
     const c = buf[ci];
     // hand/phone velocity in a yaw-arbitrary world frame, integrated from window start
@@ -189,10 +234,125 @@ export function createRecognizer(opts = {}) {
       roll += s * (buf[i].ww[0] * ni[1] - buf[i].ww[1] * ni[0]); cnt++;
     }
     roll = roll / cnt / DEG;
-    let tFirst = c.t;
-    for (let i = ci; i >= startIdx; i--) { if (buf[i].w >= 0.25 * c.w) tFirst = buf[i].t; else break; }
-    const dur = c.t - tFirst;
-    return { yaw, rise, face, roll, dur, peak: c.w, vH, vUp: v[2] };
+    let i25 = ci;
+    for (let i = ci; i >= startIdx; i--) { if (buf[i].w >= 0.25 * c.w) i25 = i; else break; }
+    const dur = c.t - buf[i25].t;
+
+    // ---- direction: hitting-face normal at contact vs forward heading at the ready pose ----
+    const nh = [s * n[0], s * n[1]], nhn = Math.hypot(nh[0], nh[1]);
+    let aimDeg = 0, aimOk = false, squareDeg = 0, readyHow = null, readyMs = null;
+    const rd = findReady(ci, Math.sign(yaw) || 1);
+    if (rd) {
+      readyHow = rd.how; readyMs = c.t - rd.b.t;
+      const f = qrot(rd.b.q, headAxisDev());
+      const fn = Math.hypot(f[0], f[1]);
+      // face pointing direction in the horizontal plane: perpendicular to the racket's (horizontal) long axis, on the
+      // hitting side. Unlike the raw normal this does not yaw when the face is opened/closed about the long axis.
+      const l = qrot(c.q, [0, 1, 0]), lhn = Math.hypot(l[0], l[1]);
+      let d = null;
+      if (lhn > 0.35) {
+        d = [-l[1] / lhn, l[0] / lhn];
+        const ref = nhn > 0.2 ? nh : [v[0], v[1]];
+        if (d[0] * ref[0] + d[1] * ref[1] < 0) d = [-d[0], -d[1]];
+      } else if (nhn > 0.3) d = [nh[0] / nhn, nh[1] / nhn];
+      if (fn > 0.3 && d) {
+        const fx = f[0] / fn, fy = f[1] / fn, rx = fy, ry = -fx;       // right = forward x up
+        aimDeg = Math.atan2(d[0] * rx + d[1] * ry, d[0] * fx + d[1] * fy) / DEG; aimOk = true;
+      }
+    }
+    // sub-sample contact time: parabolic interpolation of |omega| around the peak sample
+    let dtPk = 0;
+    if (ci > 0 && ci < buf.length - 1) {
+      const a0 = buf[ci - 1].w, a1 = c.w, a2 = buf[ci + 1].w, den = a0 - 2 * a1 + a2;
+      if (den < 0) { const d = clamp(0.5 * (a0 - a2) / den, -0.5, 0.5); dtPk = d * (d > 0 ? buf[ci + 1].t - c.t : c.t - buf[ci - 1].t); }
+    }
+    if (aimOk) aimDeg -= yaw * dtPk / 1000;           // + yaw turns the face to the left
+    if (vH > 0.4 && nhn > 0.3) squareDeg = Math.acos(clamp((nh[0] * v[0] + nh[1] * v[1]) / (nhn * vH), -1, 1)) / DEG;
+
+    // ---- execution: face stability, smooth acceleration, follow-through, duration ----
+    const lastI = buf.length - 1;
+    const fT = [], fE = [];
+    for (let i = Math.max(0, ci - 12); i <= Math.min(lastI, ci + 12); i++) {
+      if (Math.abs(buf[i].t - c.t) > 60) continue;
+      const ni = qrot(buf[i].q, [0, 0, 1]);
+      fT.push(buf[i].t); fE.push(Math.asin(clamp(s * ni[2], -1, 1)) / DEG);
+    }
+    let wobble = 0;
+    if (fT.length >= 4) {   // residual RMS about a straight line (the face may rotate steadily, but should not wobble)
+      const mt = fT.reduce((a, x) => a + x, 0) / fT.length, me = fE.reduce((a, x) => a + x, 0) / fE.length;
+      let sxy = 0, sxx = 0;
+      for (let k = 0; k < fT.length; k++) { sxy += (fT[k] - mt) * (fE[k] - me); sxx += (fT[k] - mt) ** 2; }
+      const b1 = sxx ? sxy / sxx : 0;
+      wobble = Math.sqrt(fE.reduce((a, e, k) => a + (e - (me + b1 * (fT[k] - mt))) ** 2, 0) / fE.length);
+    }
+    let i1 = ci; while (i1 < lastI && buf[i1 + 1].t <= c.t + 70) i1++;
+    const ts = [], ws = [];
+    for (let i = Math.max(0, i25 - 2); i <= Math.min(lastI, i1 + 2); i++) { ts.push(buf[i].t); ws.push(buf[i].w); }
+    const off = i25 - Math.max(0, i25 - 2);
+    const rough = quadResidual(ts, ws, off, off + (i1 - i25), 45) / c.w;
+    let dips = 0;
+    for (let i = i25 + 1; i <= ci; i++) dips += Math.max(0, buf[i - 1].w - buf[i].w);
+    const nonMono = dips / c.w;
+    let pre = 0, nPre = 0, post = 0, nPost = 0;
+    for (let i = Math.max(0, ci - 12); i <= Math.min(lastI, ci + 12); i++) {
+      const dt = buf[i].t - c.t;
+      if (dt < 0 && dt >= -70) { pre += buf[i].w; nPre++; } else if (dt > 0 && dt <= 70) { post += buf[i].w; nPost++; }
+    }
+    const follow = nPre && nPost ? Math.min(1.3, (post / nPost) / (pre / nPre)) : 1;
+    return { yaw, rise, face, roll, dur, peak: c.w, dtPk, vH, vUp: v[2], aimDeg, aimOk, squareDeg, wobble, rough, nonMono, follow, readyHow, readyMs };
+  }
+
+  function headAxisDev() {
+    if (neutralExplicit) return axes.a;
+    const p = sub([0, 1, 0], scale(neutralUp, dot([0, 1, 0], neutralUp)));
+    return norm(p) > 0.3 ? [0, 1, 0] : axes.a;
+  }
+
+  // ---- continuous outputs (DESIGN.md 6.2) ----
+  const spinRaw = (f) => f.brush / 32 - f.roll / 450;     // brush = path elevation - face elevation (deg)
+  function userMeans() {
+    const m = {};
+    for (const l of Object.keys(calib.samples)) {
+      const S = calib.samples[l];
+      if (S.length >= 2) m[l] = FEATURE_KEYS.map((_, i) => S.reduce((a, v) => a + v[i], 0) / S.length);
+    }
+    return m;
+  }
+  function analog(f) {
+    const um = userMeans();
+    const asF = (v) => ({ rise: v[0], face: v[1], roll: v[2], brush: v[0] - v[1], peak: v[4] });
+    // spin
+    const x = spinRaw({ brush: f.rise - f.face, roll: f.roll });
+    let spin = Math.tanh(x);
+    if (um.flat && um.topspin && um.slice) {
+      const xf = spinRaw(asF(um.flat)), xt = spinRaw(asF(um.topspin)), xs = spinRaw(asF(um.slice));
+      if (xt - xf > 0.15 && xf - xs > 0.15) spin = Math.tanh(0.973 * (x >= xf ? (x - xf) / (xt - xf) : (x - xf) / (xf - xs)));  // centroids -> +-0.75
+    }
+    // lift
+    let lift = clamp(f.rise / 38, 0, 1);
+    if (um.flat && um.lob && um.lob[0] - um.flat[0] > 8) lift = clamp(0.85 * (f.rise - um.flat[0]) / (um.lob[0] - um.flat[0]), 0, 1);
+    // power (relative to the user's own drive speed when calibrated)
+    let lo = cfg.powerLoDps, hi = cfg.powerHiDps;
+    const drives = [um.flat, um.topspin].filter(Boolean);
+    if (drives.length) { const ref = drives.reduce((a, v) => a + v[4], 0) / drives.length; lo = 0.35 * ref; hi = clamp(1.3 * ref, 600, 1600); }
+    const power = clamp(0.2 + 0.8 * (f.peak - lo) / (hi - lo), 0.05, 1);
+    // aim: subtract the user's habitual face angle per side (calibration swings are aimed straight)
+    let aimDeg = f.aimDeg;
+    const side = (f.yaw > 0) === (hand === 'R') ? 'fh' : 'bh';
+    const A = calib.aim[side];
+    if (A.length >= 3) aimDeg -= clamp(A.reduce((a, x) => a + x, 0) / A.length, -20, 20);
+    const aimX = f.aimOk ? clamp(aimDeg / cfg.aimFullDeg, -1, 1) : 0;
+    // execution quality
+    const ramp = (x, a, b) => clamp((x - a) / (b - a), 0, 1);           // 0 at a, 1 at b
+    const ex = {
+      face: 1 - ramp(f.wobble, 0.8, 3.5),
+      square: 1 - ramp(f.squareDeg, 20, 50),
+      smooth: 1 - ramp(f.rough + 0.5 * f.nonMono, 0.03, 0.15),
+      follow: ramp(f.follow, 0.55, 0.9),
+      dur: f.dur < 70 ? ramp(f.dur, 30, 70) : 1 - ramp(f.dur, 320, 470),
+    };
+    const exec = clamp(1 - 0.3 * (1 - ex.face) - 0.15 * (1 - ex.square) - 0.45 * (1 - ex.smooth) - 0.6 * (1 - ex.follow) - 0.3 * (1 - ex.dur), 0, 1);
+    return { aimX, aimDeg, lift, spin, power, exec, ex };
   }
 
   function emitSwing(out) {
@@ -207,12 +367,15 @@ export function createRecognizer(opts = {}) {
     const cl = classify(vec);
     const fh = (f.yaw > 0) === (hand === 'R');
     const sideConf = clamp(Math.abs(f.yaw) / (f.peak + 1e-9), 0, 1);
-    const power = clamp(0.2 + 0.8 * (f.peak - cfg.powerLoDps) / (cfg.powerHiDps - cfg.powerLoDps), 0.05, 1);
-    const feat = { ...f, sideConf, vec };
-    for (const k of Object.keys(feat)) if (typeof feat[k] === 'number') feat[k] = Math.round(feat[k] * 100) / 100;
-    feat.vec = vec.map((x) => Math.round(x * 100) / 100);
-    const ev = { type: 'swing', shot: cl.shot, side: fh ? 'fh' : 'bh', power: Math.round(power * 100) / 100,
-      conf: Math.round(cl.conf * sideConf ** 0.5 * 100) / 100, ts: tPeak, feat };
+    const an = analog(f);
+    const r2 = (x) => Math.round(x * 100) / 100;
+    const feat = { ...f, sideConf, vec, ex: an.ex };
+    for (const k of Object.keys(feat)) if (typeof feat[k] === 'number') feat[k] = r2(feat[k]);
+    feat.vec = vec.map(r2);
+    feat.ex = Object.fromEntries(Object.entries(an.ex).map(([k, x]) => [k, r2(x)]));
+    const ev = { type: 'swing', shot: cl.shot, side: fh ? 'fh' : 'bh', power: r2(an.power),
+      conf: r2(cl.conf * sideConf ** 0.5), ts: tPeak + f.dtPk,
+      aimX: r2(an.aimX), lift: r2(an.lift), spin: r2(an.spin), exec: r2(an.exec), speedDps: Math.round(f.peak), feat };
     lastSwing = ev;
     out.push(ev);
   }
@@ -280,7 +443,7 @@ export function createRecognizer(opts = {}) {
     const rec = { t, q, om, w, lw: qrot(q, linDev), ww: qrot(q, om), up: upDev };
     prev = { t, om };
     buf.push(rec);
-    while (buf.length && t - buf[0].t > 2200) buf.shift();
+    while (buf.length && t - buf[0].t > 3000) buf.shift();
     sm = 0.5 * (w + wPrev); wPrev = w;
 
     // ---- swing state machine ----
@@ -322,7 +485,7 @@ export function createRecognizer(opts = {}) {
     wMean /= win.length;
     const ok = spread < 4 && wMean < 40;
     if (ok || force) {
-      setNeutral(m);
+      setNeutral(m); neutralExplicit = true;
       tiltHeld = [0, 0]; tiltSm = [0, 0];
     }
     return { ok, reason: ok ? null : 'moving', spreadDeg: Math.round(spread * 10) / 10, wMean: Math.round(wMean), up: m };
@@ -342,13 +505,15 @@ export function createRecognizer(opts = {}) {
     if (!(label in calib.samples)) throw new Error('bad label ' + label);
     if (!ev || !ev.feat || !ev.feat.vec) return false;
     calib.samples[label].push(ev.feat.vec.slice());
+    if (ev.feat.aimOk && (ev.side === 'fh' || ev.side === 'bh')) calib.aim[ev.side].push(ev.feat.aimDeg);
     return true;
   }
   function clearCalibration(label) {
     for (const k of Object.keys(calib.samples)) if (!label || label === k) calib.samples[k] = [];
+    if (!label) calib.aim = { fh: [], bh: [] };
   }
   function exportCalibration() {
-    return { v: 1, hand, neutralUp: neutralUp.slice(), samples: JSON.parse(JSON.stringify(calib.samples)) };
+    return { v: 1, hand, neutralUp: neutralUp.slice(), neutralExplicit, samples: JSON.parse(JSON.stringify(calib.samples)), aim: JSON.parse(JSON.stringify(calib.aim)) };
   }
 
   return {

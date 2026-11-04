@@ -21,6 +21,7 @@ export function normalizeRoomCode(s) {
 
 const clamp = (x, lo, hi) => (x < lo ? lo : x > hi ? hi : x);
 const num = (x, d = 0) => (Number.isFinite(x) ? x : d);
+const optNum = (x, lo, hi) => (Number.isFinite(x) ? clamp(x, lo, hi) : undefined);
 
 // Validate + normalize an incoming message from the untrusted other end. Returns null if unusable.
 export function sanitize(m) {
@@ -31,7 +32,10 @@ export function sanitize(m) {
     case 'swing':
       if (!SHOT_TYPES.includes(m.shot)) return null;
       return { t: 'swing', shot: m.shot, side: SIDES.includes(m.side) ? m.side : 'auto', power: clamp(num(m.power, 0.5), 0, 1),
-        conf: clamp(num(m.conf, 1), 0, 1), ts: num(m.ts), feat: m.feat && typeof m.feat === 'object' ? m.feat : undefined };
+        conf: clamp(num(m.conf, 1), 0, 1), ts: num(m.ts), feat: m.feat && typeof m.feat === 'object' ? m.feat : undefined,
+        // analog fields (DESIGN.md 6.2); absent / non-numeric -> undefined so old controllers still work
+        aimX: optNum(m.aimX, -1, 1), lift: optNum(m.lift, 0, 1), spin: optNum(m.spin, -1, 1), exec: optNum(m.exec, 0, 1),
+        speedDps: optNum(m.speedDps, 0, 5000) };
     case 'btn': {
       const ids = ['serve', 'pause', 'resume', 'shotOverride'];
       if (!ids.includes(m.id)) return null;

@@ -131,7 +131,7 @@ sim.state                       // read-only snapshot, see below
 
 ### 2.2 Events (`drainEvents()`)
 ```
-{type:'hit', by, shot, side, power, quality, speedKmh, spinRpm, pos}
+{type:'hit', by, shot, side, power, quality, mishit, speedKmh, spinRpm, pos}   // mishit: null|'frame'|'floater'|'net'|'long'; serve: also serve:true
 {type:'serve', by, speedKmh, pos}
 {type:'bounce', pos, in: bool, court: 'deuce'|'ad'|'singles'|null}
 {type:'net', pos, cord: bool}          // cord = clipped tape and went over
@@ -280,7 +280,8 @@ Phone → host:
 ```
 {t:'hello', v:1, hand:'R'|'L', ua, calibrated:bool}
 {t:'tilt', x, z, ts}                 // x,z in [-1,1]; z=-1 = tilt forward = move toward net
-{t:'swing', shot, side, power, conf, ts, feat?}   // ts = phone performance.now() at peak
+{t:'swing', shot, side, power, conf, ts, feat?,    // ts = phone performance.now() at peak |ω| (sub-sample interpolated)
+         aimX, lift, spin, exec, speedDps}         // analog fields, see §6.2 (optional: old controllers omit them)
 {t:'btn', id:'serve'|'pause'|'resume'|'shotOverride', value?}
 {t:'ping', id, ts}   {t:'pong', id, ts, hostTs}
 ```
@@ -291,9 +292,22 @@ Host → phone:
 {t:'haptic', pattern:[ms,...]}     // e.g. on hit quality, on point won/lost
 {t:'ping', id, ts}   {t:'pong', id, ts, phoneTs}
 ```
+Analog swing field conventions (CTL, see docs/CONTROLLER.md §3b):
+- `aimX` = horizontal direction of the hitting face at contact (perpendicular to the racket's horizontal long axis, on the
+  hitting side), relative to the head direction at the ready pose found just before the backswing; ±30° → ±1.
+  Absolute left/right for the player (−1 left). Early contact ⇒ face turned across the body ⇒ cross-court:
+  R-forehand/L-backhand → aimX<0, R-backhand/L-forehand → aimX>0. With swing calibration the user's habitual per-side
+  bias is subtracted.
+- `spin` = tanh((pathElev − faceElev)/32° − faceRollRate/450°/s); with calibration rescaled so the user's own
+  topspin/slice centroids map to ±0.75 and flat to 0. `lift` = pathElev/38° clamped (calibrated: flat→0, lob→0.85).
+- `exec` = 1 − weighted penalties: face wobble around contact, |ω| roughness/dips during acceleration, follow-through
+  (mean |ω| 0–70 ms after peak ÷ 70 ms before), acceleration time (70–320 ms ok), face-vs-path misalignment.
+- A touch-forced type (`shotOverride`) keeps `aimX`/`exec` but RemoteInput passes `spin`/`lift` as null.
+
 ### 4.5 `src/input/remote.js`
 `class RemoteInput { constructor(sim, playerIndex, host); handle(msg); notify(events, state); }` —
-maps `tilt`→`sim.setMove`, `swing`→`sim.swing({...,source:'remote', ageMs})`, `btn serve`→ serve swing,
+maps `tilt`→`sim.setMove`, `swing`→`sim.swing({shot, side, power, aimX, aimDepth:null, spin, lift, exec, ageMs, source:'remote'})`
+(missing analog fields → null), `btn serve`→ serve swing,
 emits `haptic`/`state` to phone from sim events. Applies user timing offset setting.
 
 ---
@@ -316,6 +330,20 @@ Semantics: `shuffle` = side steps facing the net (short adjustments ≤ ~2.5 m, 
 lateral move; `run` = sprint; `backpedal` = moving back while facing the net; `brake` = deceleration / plant before a shot
 (wide base, low centre of mass); `split` = split-step hop timed with the opponent's contact.
 
+SIM implementation notes (`src/game/player.js`):
+- Drive a(v) = 20·(1 − v/6) + 1.5 m/s² (×1.15 for 0.5 s after a split step): ~0.65 s from rest to 90 % of 6 m/s; braking ≤ 13 m/s²;
+  move orders stop with planned 7 m/s² braking steps (`brake` while decelerating hard or settling). During the follow-through
+  of a swing the feet plant (no instant recovery reversal).
+- Move orders (`player.moveTo(x,z,timeLeft)`, used by the AI and by `autoMove` 'assist'/'full') have start/stop hysteresis
+  (start only if > 0.30 m away, set within 0.08 m), so a player is either clearly moving or clearly set.
+- Footwork is chosen when a move starts: lateral ≤ 2.5 m → `shuffle` (cap 3.6 m/s); longer lateral → `crossover` (0.32 s) then
+  `run`; backwards ≤ 3.5 m → `backpedal` (cap 3.8 m/s); forward/long → `run` (6 m/s). Under time pressure (needed speed > 1.7 m/s)
+  short moves are run instead of shuffled.
+- `strideLen` (m per gait cycle): run 1.5 + 0.18·v, crossover 1.5, shuffle 0.9 + 0.04·v, backpedal 1.0, brake 1.0, walk 1.35.
+  `split` also sets `anim.phase` 0..1 over the 0.2 s hop. `face` = net direction except `run` (= dir) and `crossover` (half turned).
+- Auto-move: the interception stand is planned once per incoming ball (re-planned at the bounce), only after the split step;
+  after the player's own shot it recovers (shuffle) toward a recovery spot near the centre behind the baseline.
+
 ### 6.2 Analog swing (CTL produces, SIM consumes)
 Phone → host `swing` message adds (all optional; old fields unchanged):
 ```
@@ -331,3 +359,17 @@ speedDps: deg/s // peak angular speed (power is still sent, normalized)
 SIM must make these produce clearly different, physically consistent shots: power → pace; spin → rpm & arc; lift → net
 clearance/depth (high lift + low pace ⇒ lob); aimX blended with timing for direction; exec × timing × body position ⇒ contact
 quality ⇒ error scatter (mishits: frame shots, short floaters, shanks on very poor quality). Keyboard (no analog fields) keeps working.
+
+SIM implementation notes (`src/game/shot.js` `computeHit`):
+- Defaults when analog fields are absent (keyboard/AI): flat {spin .12, lift .35}, topspin {.72, .5}, slice {−.72, .3},
+  lob {.35, .95}; `exec` = 1. With analog fields the stroke label is derived from `spin` (> .35 topspin, < −.3 slice, else flat).
+- power → pace: groundstroke km/h = (50 + (vmax − 50)·power^0.85)·(0.72 + 0.28·q^0.7) + incoming-pace bonus, vmax = 165 flat,
+  135 at spin +1, 105 at spin −1. A hard ball that cannot clear the net at the intended depth is hit deeper first, then slowed.
+- spin → rpm: +1 ≈ 3500 rpm topspin at full power, −1 ≈ −3000 rpm backspin; topspin raises net clearance and kicks, slice skids.
+- lift → target depth (4.6 m inside the baseline at 0 … 0.9 m at 1) and therefore net clearance; lift > 0.72 with power < 0.5 = lob.
+- aimX (remote) is relative to the player's own left/right, blended 0.8·aimX + 0.25·timing-aim; inside the court a wide aim
+  becomes a shorter, sharper angle.
+- quality q = (exec' × timing × height × reach × running × incoming pace/spin × side × stamina)^0.85 (exec' = 0.15 + 0.85·exec).
+  Scatter ∝ (1 − q); below q ≈ 0.68 mishits occur with rising probability: `mishit` ∈ 'frame' (wild direction, low pace),
+  'floater' (short, high, slow), 'net', 'long'. Reported in the `hit` event (`quality`, `mishit`) and in `state.lastShot`.
+

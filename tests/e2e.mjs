@@ -2,17 +2,21 @@
 // in one browser context, linked by the BroadcastChannel transport. Usage: node tests/e2e.mjs [outDir]
 import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
+import os from 'node:os';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const out = process.argv[2] || '/tmp/claude-0/-home-user/1ed3b93b-9ab4-51cf-b0b0-f10d7faeaf73/scratchpad/ctl';
+const out = process.argv[2] || path.join(os.tmpdir(), 'realtennis-e2e');
 mkdirSync(out, { recursive: true });
-const PORT = 8800 + Math.floor(Math.random() * 100);
-const srv = spawn('python3', ['-m', 'http.server', String(PORT), '--bind', '127.0.0.1'], { cwd: root, stdio: 'ignore' });
+const PORT = Number(process.env.PORT || 8180);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// reuse a server already serving the repo on PORT, otherwise start one
+let srv = null;
+try { const r = await fetch(`http://127.0.0.1:${PORT}/controller.html`); if (!r.ok) throw new Error(); console.log(`(reusing server on :${PORT})`); }
+catch (e) { srv = spawn('python3', ['-m', 'http.server', String(PORT), '--bind', '127.0.0.1'], { cwd: root, stdio: 'ignore' }); }
 let failures = 0;
 const check = (n, ok, info = '') => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${n} ${info}`); };
 async function pollHost(host, fn, timeout = 5000) {
@@ -110,6 +114,46 @@ try {
   const simSw = await host.evaluate(() => window.__simCalls.filter((c) => c[0] === 'swing').length);
   check('RemoteInput forwarded swings to sim.swing', simSw >= 8, `(${simSw})`);
 
+  // ---- analog swing fields (DESIGN.md 6.2) ----
+  const AN = ['aimX', 'lift', 'spin', 'exec', 'speedDps'];
+  check('analog fields arrive at host on every swing', results.every((r) => r.sw && AN.every((k) => typeof r.sw[k] === 'number')),
+    JSON.stringify(results.map((r) => r.sw && AN.map((k) => r.sw[k]))));
+  const meanSpin = (shot) => { const a = results.filter((r) => r.shot === shot && r.sw).map((r) => r.sw.spin); return a.reduce((x, y) => x + y, 0) / a.length; };
+  const sp = { topspin: meanSpin('topspin'), flat: meanSpin('flat'), slice: meanSpin('slice') };
+  check('spin ordering topspin > flat > slice', sp.topspin > sp.flat && sp.flat > sp.slice, JSON.stringify(sp));
+  const lobLift = results.filter((r) => r.shot === 'lob').map((r) => r.sw.lift), flatLift = results.filter((r) => r.shot === 'flat').map((r) => r.sw.lift);
+  check('lift: lob > flat', Math.min(...lobLift) > Math.max(...flatLift), JSON.stringify({ lobLift, flatLift }));
+  const calls = await host.evaluate(() => window.__simCalls.filter((c) => c[0] === 'swing').map((c) => c[2]));
+  check('sim.swing receives aimX/spin/lift/exec (RemoteInput, DESIGN 6.2)', calls.length >= 8 && calls.every((o) => ['aimX', 'spin', 'lift', 'exec'].every((k) => typeof o[k] === 'number') && o.aimDepth === null && o.source === 'remote'),
+    JSON.stringify(calls[0]));
+
+  async function simSwing(o) {
+    await host.evaluate(() => { window.__msgs.length = 0; });
+    await ph.evaluate((o) => window.__ctl.swing(o), o);
+    await pollHost(host, () => window.__msgs.some((m) => m.t === 'swing'));
+    const sw = await host.evaluate(() => window.__msgs.find((m) => m.t === 'swing'));
+    await ph.waitForFunction(() => !window.__ctl.phoneSim.busy, null, { timeout: 8000 });
+    await ph.waitForTimeout(400);
+    return sw;
+  }
+  const early = await simSwing({ shot: 'flat', side: 'fh', contactYaw: 20 });
+  const late = await simSwing({ shot: 'flat', side: 'fh', contactYaw: -20 });
+  const earlyBh = await simSwing({ shot: 'flat', side: 'bh', contactYaw: 20 });
+  check('direction: right-hander forehand early -> left/cross (aimX<0), late -> right; backhand early -> right',
+    early && late && earlyBh && early.aimX < -0.3 && late.aimX > 0.3 && earlyBh.aimX > 0.3, JSON.stringify([early && early.aimX, late && late.aimX, earlyBh && earlyBh.aimX]));
+  const clean = await simSwing({ shot: 'topspin', side: 'fh', contactYaw: 0 });
+  const jerky = await simSwing({ shot: 'topspin', side: 'fh', contactYaw: 0, jerk: 1 });
+  await ph.waitForTimeout(100);
+  await ph.screenshot({ path: `${out}/6b-play-jerky.png` });
+  const trunc = await simSwing({ shot: 'topspin', side: 'fh', contactYaw: 0, truncate: 1 });
+  check('execution: clean > jerky, clean > truncated follow-through', clean && jerky && trunc && clean.exec >= 0.85 && jerky.exec < clean.exec - 0.2 && trunc.exec < clean.exec - 0.2,
+    JSON.stringify([clean && clean.exec, jerky && jerky.exec, trunc && trunc.exec]));
+  const grade = await ph.textContent('#last-grade'), hint = await ph.textContent('#ex-hint'), dir = await ph.textContent('#dir-label');
+  check('phone shows grade + hint + direction for the last swing', grade.length > 0 && hint.includes('提示') && dir.length > 0, `${grade} | ${hint} | ${dir}`);
+  const strong = await simSwing({ shot: 'flat', side: 'fh', contactYaw: 0, speed: 1.35 });
+  const soft = await simSwing({ shot: 'flat', side: 'fh', contactYaw: 0, speed: 0.65 });
+  check('power: fast swing > slow swing', strong && soft && strong.power > soft.power + 0.2 && strong.speedDps > soft.speedDps, JSON.stringify([strong && [strong.power, strong.speedDps], soft && [soft.power, soft.speedDps]]));
+
   // touch buttons: override + serve + pause
   await host.evaluate(() => { window.__msgs.length = 0; window.__simCalls.length = 0; });
   await ph.dispatchEvent('.pad[data-shot="lob"]', 'pointerdown', { pointerId: 5, bubbles: true });
@@ -137,6 +181,6 @@ try {
   console.error('E2E exception', e); failures++;
 } finally {
   if (browser) await browser.close();
-  srv.kill();
+  if (srv) srv.kill();
 }
 process.exit(failures ? 1 : 0);

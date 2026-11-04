@@ -91,9 +91,31 @@
       <div class="tilt-label">倾斜走位<small>拍头压低＝前进　抬高＝后退　右倒＝右移</small></div>
     </div>
     <div class="last" id="last-swing">
-      <div class="last-shot" id="last-shot">—</div>
+      <div class="last-head">
+        <div class="last-shot" id="last-shot">—</div>
+        <div class="grade" id="last-grade" hidden>—</div>
+      </div>
       <div class="last-meta"><span id="last-side"></span><span id="last-power"></span><span id="last-conf"></span></div>
-      <div class="power-bar"><div id="last-power-bar"></div></div>
+      <div class="last-grid">
+        <div class="dir">
+          <svg viewBox="-50 -50 100 100" aria-label="击球方向">
+            <path d="M-34 38 L-22 -38 L22 -38 L34 38 Z" fill="none" stroke="#3b5c4c" stroke-width="2"/>
+            <line x1="0" y1="-38" x2="0" y2="38" stroke="#3b5c4c" stroke-width="1" stroke-dasharray="3 3"/>
+            <g id="dir-arrow" transform="rotate(0 0 34)">
+              <line x1="0" y1="34" x2="0" y2="-26" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
+              <path d="M-12 -18 L0 -38 L12 -18 Z" fill="currentColor"/>
+            </g>
+          </svg>
+          <div class="dir-label" id="dir-label">方向</div>
+        </div>
+        <div class="bars">
+          <div class="bar-row"><span class="bar-name">旋转</span><div class="spin-bar"><i></i><b id="spin-mark"></b></div></div>
+          <div class="bar-ends"><span>切削</span><span>平</span><span>上旋</span></div>
+          <div class="bar-row"><span class="bar-name">力度</span><div class="power-bar"><div id="last-power-bar"></div></div></div>
+          <div class="bar-row"><span class="bar-name">弧度</span><div class="power-bar lift"><div id="last-lift-bar"></div></div></div>
+        </div>
+      </div>
+      <div class="ex-hint" id="ex-hint"></div>
     </div>
     <div class="pads" id="pads">
       <button class="pad" data-shot="flat">平击</button>
@@ -131,6 +153,8 @@
       <button data-shot="flat">1 平击</button><button data-shot="topspin">2 上旋</button><button data-shot="slice">3 切削</button><button data-shot="lob">4 挑高</button>
     </div>
     <div class="sim-row" id="sim-sides"><button data-side="fh">F 正手</button><button data-side="bh">B 反手</button></div>
+    <div class="sim-row" id="sim-timing"><button data-v="18">早</button><button data-v="0">中</button><button data-v="-18">晚</button></div>
+    <div class="sim-row" id="sim-quality"><button data-v="clean">标准</button><button data-v="jerk">抖动</button><button data-v="trunc">急停</button></div>
     <button class="btn accent" id="sim-swing">挥拍 (空格)</button>
     <div class="sim-row"><label><input type="checkbox" id="sim-flip"> 反面持握</label><label><input type="checkbox" id="sim-walk"> 走路抖动</label></div>
   </aside>

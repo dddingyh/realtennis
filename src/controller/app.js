@@ -136,20 +136,56 @@ function onSwing(ev) {
   if (S.wizard) { wizardSwing(ev); return; }
   if ($('s-play').hidden) return;
   const shot = S.override || ev.shot;
-  const msg = { t: 'swing', shot, side: ev.side, power: ev.power, conf: S.override ? 1 : ev.conf, ts: ev.ts + S.tOffset - S.adj, feat: compactFeat(ev.feat) };
+  const forced = !!S.override && S.override !== ev.shot;
+  const msg = { t: 'swing', shot, side: ev.side, power: ev.power, conf: S.override ? 1 : ev.conf, ts: ev.ts + S.tOffset - S.adj,
+    aimX: ev.aimX, exec: ev.exec, speedDps: ev.speedDps, feat: compactFeat(ev.feat) };
+  if (!forced) { msg.lift = ev.lift; msg.spin = ev.spin; }   // a forced type: let the game use that type's own spin/arc
   if (client && !S.paused) client.send(msg);
   S.lastSwing = { ...ev, shot };
-  showSwing(shot, ev.side, ev.power, S.override ? null : ev.conf);
-  vibrate(28);
+  showSwing({ ...msg, conf: S.override ? null : ev.conf, ex: ev.feat.ex });
+  vibrate(ev.exec >= 0.85 ? [20, 30, 40] : 28);
 }
-const compactFeat = (f) => ({ rise: f.rise, face: f.face, roll: f.roll, dur: f.dur, peak: f.peak, yaw: f.yaw });
-function showSwing(shot, side, power, conf) {
+const compactFeat = (f) => ({ rise: f.rise, face: f.face, roll: f.roll, dur: f.dur, peak: f.peak, yaw: f.yaw, aimDeg: f.aimDeg, ex: f.ex });
+// direction label: for a right-handed forehand (or left-handed backhand) face to the left = cross-court
+function dirText(aimX, side) {
+  if (aimX == null || side === 'auto') return '—';
+  if (Math.abs(aimX) < 0.25) return '中路';
+  const ccw = (S.hand || 'R') === 'R' ? side === 'fh' : side === 'bh';
+  const cross = ccw ? aimX < 0 : aimX > 0;
+  return `${cross ? '斜线' : '直线'} · ${aimX < 0 ? '偏左' : '偏右'}`;
+}
+const EX_TIPS = { face: '拍面不稳', smooth: '加速不连贯', follow: '随挥不完整', square: '拍面没对准挥拍方向' };
+function gradeOf(exec) {
+  if (exec >= 0.85) return ['完美', 'g-perfect']; if (exec >= 0.65) return ['好', 'g-good']; if (exec >= 0.4) return ['一般', 'g-fair']; return ['差', 'g-poor'];
+}
+function showSwing(m) {
   const box = $('last-swing');
+  const { shot, side, power } = m;
   $('last-shot').textContent = SHOT_CN[shot] || shot;
   $('last-side').textContent = SIDE_CN[side] || '';
   $('last-power').textContent = `力度 ${Math.round(power * 100)}`;
-  $('last-conf').textContent = conf == null ? '手动' : `把握 ${Math.round(conf * 100)}%`;
+  $('last-conf').textContent = m.conf == null ? '手动' : `把握 ${Math.round(m.conf * 100)}%`;
   $('last-power-bar').style.width = Math.round(power * 100) + '%';
+  $('last-lift-bar').style.width = m.lift == null ? '0%' : Math.round(m.lift * 100) + '%';
+  const sb = $('spin-mark').parentElement;
+  sb.classList.toggle('none', m.spin == null);
+  if (m.spin != null) $('spin-mark').style.left = (50 + 50 * m.spin) + '%';
+  const ang = m.aimX == null ? 0 : m.aimX * 35;
+  $('dir-arrow').setAttribute('transform', `rotate(${ang.toFixed(1)} 0 34)`);
+  $('dir-label').textContent = dirText(m.aimX, side);
+  const g = $('last-grade'), hint = $('ex-hint');
+  if (m.exec == null) { g.hidden = true; hint.textContent = ''; }
+  else {
+    const [txt, cls] = gradeOf(m.exec);
+    g.hidden = false; g.textContent = txt; g.className = 'grade ' + cls;
+    let tip = '';
+    if (m.exec < 0.85 && m.ex) {
+      const worst = Object.entries(m.ex).sort((a, b) => a[1] - b[1])[0];
+      if (worst && worst[1] < 0.9) tip = worst[0] === 'dur' ? ((m.feat && m.feat.dur < 70) ? '动作太短促' : '挥拍太慢') : EX_TIPS[worst[0]] || '';
+    }
+    hint.textContent = tip ? '提示：' + tip : (m.exec >= 0.85 ? '动作干净 ✓' : '');
+    hint.className = 'ex-hint' + (tip ? '' : ' ok');
+  }
   box.className = 'last shot-' + shot;
   void box.offsetWidth; box.classList.add('flash');
 }
@@ -269,7 +305,7 @@ function wizardSwing(ev) {
   rec.addCalibrationSwing(k, ev);
   w.counts[k]++; w.last = k;
   const f = ev.feat;
-  $('cal-feat').textContent = `识别：${SIDE_CN[ev.side]} ${SHOT_CN[ev.shot]}　力度 ${Math.round(ev.power * 100)}\n上扬角 ${f.rise.toFixed(0)}°  拍面 ${f.face.toFixed(0)}°  翻转 ${f.roll.toFixed(0)}°/s  峰值 ${f.peak.toFixed(0)}°/s`;
+  $('cal-feat').textContent = `识别：${SIDE_CN[ev.side]} ${SHOT_CN[ev.shot]}　力度 ${Math.round(ev.power * 100)}　动作 ${gradeOf(ev.exec)[0]}\n上扬角 ${f.rise.toFixed(0)}°  拍面 ${f.face.toFixed(0)}°  翻转 ${f.roll.toFixed(0)}°/s  方向 ${f.aimDeg.toFixed(0)}°  峰值 ${f.peak.toFixed(0)}°/s`;
   vibrate(30);
   if (w.counts[k] >= 3) w.idx++;
   renderWizard();
@@ -308,7 +344,7 @@ function bindPads() {
       if (!S.held.has(shot)) return; S.held.delete(shot); b.classList.remove('held');
       if (S.touch && performance.now() - down < 500 && !S.paused) {
         const msg = { t: 'swing', shot, side: 'auto', power: 0.7, conf: 1, ts: performance.now() - S.adj };
-        client && client.send(msg); showSwing(shot, 'auto', 0.7, null); vibrate(25);
+        client && client.send(msg); showSwing({ ...msg, conf: null }); vibrate(25);
       }
       clearTimeout(S.ovTimer);
       S.ovTimer = setTimeout(() => { if (!S.held.size) { S.override = null; client && client.send({ t: 'btn', id: 'shotOverride', value: null }); } }, S.touch ? 50 : 700);
@@ -351,13 +387,28 @@ function bindSettings() {
 // ---------------------------------------------------------------- simulator panel
 function bindSim() {
   const panel = $('simpanel'); panel.hidden = false; document.body.classList.add('sim');
-  panel.querySelector('.sim-title').addEventListener('click', () => panel.classList.toggle('collapsed'));
+  const syncH = () => document.body.style.setProperty('--simh', panel.offsetHeight + 'px');
+  panel.querySelector('.sim-title').addEventListener('click', () => { panel.classList.toggle('collapsed'); syncH(); });
+  window.addEventListener('resize', syncH); setTimeout(syncH, 0);
   let shot = 'topspin', side = 'fh';
   const mark = () => { document.querySelectorAll('#sim-shots button').forEach((b) => b.classList.toggle('on', b.dataset.shot === shot)); document.querySelectorAll('#sim-sides button').forEach((b) => b.classList.toggle('on', b.dataset.side === side)); };
   mark();
   document.querySelectorAll('#sim-shots button').forEach((b) => b.addEventListener('click', () => { shot = b.dataset.shot; mark(); }));
   document.querySelectorAll('#sim-sides button').forEach((b) => b.addEventListener('click', () => { side = b.dataset.side; mark(); }));
-  const swing = (o = {}) => { if (phoneSim && !phoneSim.busy) phoneSim.startSwing({ shot: o.shot || shot, side: o.side || side, speed: o.speed || 1, sloppy: 0.3 }); };
+  let timing = 0, quality = 'clean';
+  const markK = () => {
+    document.querySelectorAll('#sim-timing button').forEach((b) => b.classList.toggle('on', Number(b.dataset.v) === timing));
+    document.querySelectorAll('#sim-quality button').forEach((b) => b.classList.toggle('on', b.dataset.v === quality));
+  };
+  markK();
+  document.querySelectorAll('#sim-timing button').forEach((b) => b.addEventListener('click', () => { timing = Number(b.dataset.v); markK(); }));
+  document.querySelectorAll('#sim-quality button').forEach((b) => b.addEventListener('click', () => { quality = b.dataset.v; markK(); }));
+  // o may also carry generator knobs: contactYaw, pathDeg, faceDeg, rollDps, jerk, truncate, speed
+  const swing = (o = {}) => {
+    if (!phoneSim || phoneSim.busy) return;
+    const q = { contactYaw: timing, jerk: quality === 'jerk' ? 0.85 : 0, truncate: quality === 'trunc' ? 1 : 0 };
+    phoneSim.startSwing({ sloppy: 0.3, speed: 1, ...q, ...o, shot: o.shot || shot, side: o.side || side });
+  };
   $('sim-swing').addEventListener('click', () => swing());
   window.addEventListener('keydown', (e) => {
     if (e.target && e.target.tagName === 'INPUT') return;

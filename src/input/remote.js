@@ -49,7 +49,16 @@ export class RemoteInput {
     const ageMs = this._ageMs(msg);
     this.stats.swings++; this.stats.lastAgeMs = ageMs; this.stats.lastSwing = { ...msg, shot };
     if (!this.sim || !this.sim.swing) return;
-    this.sim.swing(this.i, { shot, side: msg.side === 'fh' || msg.side === 'bh' ? msg.side : 'auto', power: msg.power, aimX: null, aimDepth: null, ageMs, source: 'remote' });
+    // analog fields (DESIGN.md 6.2). A forced type (touch override) keeps direction/quality but drops the measured
+    // spin/lift, which describe a different stroke than the one the player asked for.
+    const forced = !!this.override && this.override !== msg.shot;
+    const opt = (x) => (Number.isFinite(x) ? x : null);
+    this.sim.swing(this.i, {
+      shot, side: msg.side === 'fh' || msg.side === 'bh' ? msg.side : 'auto', power: msg.power,
+      aimX: opt(msg.aimX), aimDepth: null,
+      spin: forced ? null : opt(msg.spin), lift: forced ? null : opt(msg.lift), exec: opt(msg.exec),
+      ageMs, source: 'remote',
+    });
   }
 
   _btn(msg) {

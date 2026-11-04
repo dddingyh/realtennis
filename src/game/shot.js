@@ -19,7 +19,7 @@ const SOLVE_DT = 1 / 120;
 const SERVE_NOISE_FLOOR = 0.75;      // deg: even a perfect serve has some scatter
 const SERVE_NOISE_K = 3.6;
 const GROUND_NOISE_FLOOR = 0.2;     // deg launch-angle scatter at q->1 (non-forced)
-const GROUND_NOISE_K = 3.0;          // deg per unit of (1-q)^1.2 * risk
+const GROUND_NOISE_K = 3.8;          // deg per unit of (1-q)^1.2 * risk
 const RPM = Math.PI / 30;
 const KMH = 1 / 3.6;
 
@@ -90,21 +90,25 @@ function runShot(pos, speed, el, rot, h0x, h0z, top, side, surface) {
  * @returns {{vel,spin,speed,el,landing,netClear,ok:boolean}}
  */
 export function solveLaunch(spec) {
-  const { pos, target, top, side, surface } = spec;
+  const { pos, top, side, surface } = spec;
+  let target = spec.target;
   const minClear = spec.minNetClear ?? MIN_NET_CLEAR;
-  const dx0 = target.x - pos.x, dz0 = target.z - pos.z;
-  const D = Math.hypot(dx0, dz0) || 1;
-  const h0x = dx0 / D, h0z = dz0 / D, px = -h0z, pz = h0x;
+  const axes = (t) => {
+    const dx0 = t.x - pos.x, dz0 = t.z - pos.z, D = Math.hypot(dx0, dz0) || 1;
+    return { D, h0x: dx0 / D, h0z: dz0 / D, px: -dz0 / D, pz: dx0 / D };
+  };
+  let { D, h0x, h0z, px, pz } = axes(target);
   const along = (l) => (l.x - pos.x) * h0x + (l.z - pos.z) * h0z;
   const rangeOf = (r) => (r.landing ? along(r.landing) : -1e9);
   const fixedEl = spec.elevation !== undefined;
 
+  let topNow = top;
   const solveOnce = (speed, rot) => {
     if (fixedEl) {                                   // bisect speed
       let lo = 7, hi = 42;
       for (let i = 0; i < 12; i++) {
         const mid = 0.5 * (lo + hi);
-        const { r } = runShot(pos, mid, spec.elevation, rot, h0x, h0z, top, side, surface);
+        const { r } = runShot(pos, mid, spec.elevation, rot, h0x, h0z, topNow, side, surface);
         if (rangeOf(r) < D) lo = mid; else hi = mid;
       }
       return { speed: hi, el: spec.elevation };
@@ -112,20 +116,20 @@ export function solveLaunch(spec) {
     const elMin = spec.elMin ?? -55 * Math.PI / 180;
     let hi = 0, best = -1e9;
     for (const d of [22, 31, 40]) {                  // find roughly the max-range angle
-      const rg = rangeOf(runShot(pos, speed, d * Math.PI / 180, rot, h0x, h0z, top, side, surface).r);
+      const rg = rangeOf(runShot(pos, speed, d * Math.PI / 180, rot, h0x, h0z, topNow, side, surface).r);
       if (rg > best) { best = rg; hi = d * Math.PI / 180; }
     }
     if (best < D) return { speed, el: hi, unreachable: true };
     let lo = elMin;
     for (let i = 0; i < 13; i++) {
       const mid = 0.5 * (lo + hi);
-      const { r } = runShot(pos, speed, mid, rot, h0x, h0z, top, side, surface);
+      const { r } = runShot(pos, speed, mid, rot, h0x, h0z, topNow, side, surface);
       if (rangeOf(r) < D) lo = mid; else hi = mid;
     }
     return { speed, el: hi };
   };
 
-  let speed = spec.speed, rot = 0, sol, out, topNow = top;
+  let speed = spec.speed, rot = 0, sol, out;
   let slowSteps = 0;
   for (let attempt = 0; attempt < 40; attempt++) {
     for (let it = 0; it < 3; it++) {
@@ -145,12 +149,20 @@ export function solveLaunch(spec) {
     const nc = out.r.netClear;
     const clears = !out.r.hitNet && (nc === null || nc >= minClear);
     if (clears || fixedEl) break;
+    if (spec.deepZ != null && Math.abs(target.z) < Math.abs(spec.deepZ) - 0.01) {
+      // push the target deeper along the shot direction before giving up pace
+      const nz = Math.sign(spec.deepZ) * Math.min(Math.abs(spec.deepZ), Math.abs(target.z) + 0.6);
+      const k = (nz - pos.z) / (target.z - pos.z || 1);
+      target = { x: pos.x + (target.x - pos.x) * k, z: nz };
+      ({ D, h0x, h0z, px, pz } = axes(target));
+      continue;
+    }
     speed *= slowSteps++ < 4 ? 0.92 : 0.84;          // too flat to clear the net: slow it down (higher arc)
   }
   const l = out.r.landing;
   return {
     vel: out.vel, spin: out.spin, speed: sol.speed, top: topNow, el: sol.el, rot,
-    landing: l ? { x: l.x, z: l.z } : null, netClear: out.r.netClear,
+    landing: l ? { x: l.x, z: l.z } : null, netClear: out.r.netClear, target,
     ok: !!l && !out.r.hitNet && !sol.unreachable && Math.hypot(l.x - target.x, l.z - target.z) < 0.5,
   };
 }
@@ -202,15 +214,23 @@ export function computeHit(inp) {
   const inSpeed = Math.hypot(ball.vel.x, ball.vel.y, ball.vel.z);
   const inSpin = Math.hypot(ball.spin.x, ball.spin.y, ball.spin.z);
 
-  let shot = SHOT_SET.has(swing.shot) ? swing.shot : 'topspin';
+  // ---- swing intent: analog (phone, DESIGN §6.2) or derived from the discrete shot label (keyboard / AI)
+  const label0 = SHOT_SET.has(swing.shot) ? swing.shot : 'topspin';
+  const D = SHOT_DEFAULTS[label0];
+  const analog = swing.spin != null || swing.lift != null || swing.exec != null;
+  const spinI = clamp(swing.spin ?? D.spin, -1, 1);          // -1 heavy slice .. 0 flat .. +1 heavy topspin
+  const lift = clamp(swing.lift ?? D.lift, 0, 1);            // swing-path elevation: arc / depth
+  const exec = clamp(swing.exec ?? 1, 0, 1);                 // execution quality of the motion itself
+  let shot = analog ? (spinI > 0.35 ? 'topspin' : spinI < -0.3 ? 'slice' : 'flat') : label0;
+  const wantsLob = label0 === 'lob' && !analog || (lift > 0.72 && power < 0.5);
   let kind = 'ground';
-  if (shot === 'lob') kind = 'lob';
-  else if (shot !== 'slice' && y > 1.9 && netD < 9.5 && ball.vel.y < 2.5) kind = 'smash';
+  if (wantsLob) { kind = 'lob'; shot = 'lob'; }
+  else if (spinI > -0.3 && y > 1.9 && netD < 9.5 && ball.vel.y < 2.5) kind = 'smash';
   else if (ball.bounces === 0 && netD < 6.8) kind = 'volley';
   const P = kind === 'volley' ? VOLLEY : kind === 'smash' ? SMASH : STROKES[shot];
   const label = kind === 'ground' ? shot : kind;
 
-  // ---- contact quality
+  // ---- contact quality = exec x timing x body position x incoming-ball difficulty
   const early = clamp((inp.timingEarlyMs ?? geo.tEarly * 1000), -400, 400);
   const inside = clamp(-behind, 0, 3) / 3;                      // 0..1 how far inside the baseline
   const tau = TAU[source] * (1 - 0.15 * inside) * (kind === 'volley' ? 0.9 : 1);
@@ -221,92 +241,138 @@ export function computeHit(inp) {
   if (geo.latAbs < 0.65) fReach = 1 - 0.5 * (0.65 - geo.latAbs) / 0.65;            // jammed
   else if (geo.latAbs > 1.0) fReach = 1 - 0.55 * clamp((geo.latAbs - 1.0) / (maxR - 1.0), 0, 1.3);   // stretched
   const fRun = 1 - 0.25 * clamp(hSpeed / 6, 0, 1);
-  const fPace = 1 - 0.2 * clamp((inSpeed - 28) / 25, 0, 1) - 0.15 * clamp((inSpin - 200) / 300, 0, 1);
+  const fPace = 1 - 0.22 * clamp((inSpeed - 25) / 25, 0, 1) - 0.15 * clamp((inSpin - 200) / 300, 0, 1);
   const fSide = sideFactor(swing.side, geo);
   const fStam = 0.9 + 0.1 * (hitter.stamina ?? 1);
-  let q = Math.pow(fTiming * fHeight * fReach * fRun * fPace * fSide * fStam, QUALITY_EXP);
+  const fExec = 0.15 + 0.85 * exec;
+  let q = Math.pow(fExec * fTiming * fHeight * fReach * fRun * fPace * fSide * fStam, QUALITY_EXP);
   q = clamp(q, 0.02, 1);
   if (opts.forceQuality != null) q = opts.forceQuality;
   const stretch = Math.max(clamp((geo.latAbs - 1.0) / 0.45, 0, 1), 0.8 * clamp((hSpeed - 4.6) / 1.4, 0, 1));
 
-  // ---- target
-  const kA = clamp(1 - 0.08 * clamp(behind, 0, 4) - 0.3 * stretch + 0.04 * clamp(-behind, 0, 3) + (kind === 'volley' ? 0.12 : 0), 0.45, 1.15);
+  // ---- target: direction from aim (+timing), depth from lift (or explicit aimDepth)
+  const kA = clamp(1 - 0.08 * clamp(behind, 0, 4) - 0.3 * stretch + 0.05 * clamp(-behind, 0, 4) + (kind === 'volley' ? 0.12 : 0), 0.45, 1.2);
   const edge = swing.edge ?? 0.4;
   const marginX = lerp(0.95, 0.25, edge) - (kind === 'volley' ? 0.1 : 0);
   const halfW = COURT.singlesHalfWidth;
   const xLim = (halfW - marginX) * kA;
+  const hxp = hitter.pos.x;
+  const sg = Math.abs(hxp) > 0.8 ? sign(hxp) : sign(ball.pos.x || geo.handX);
+  const late = clamp(-early / 70, -1, 1);                       // + = late
+  const timingAim = -sg * (late >= 0 ? 0.55 - 1.1 * late : 0.55 + 0.35 * -late);
   let aim;
-  if (swing.aimX != null) aim = clamp(swing.aimX, -1, 1);
-  else {
-    const hxp = hitter.pos.x;
-    const sg = Math.abs(hxp) > 0.8 ? sign(hxp) : sign(ball.pos.x || geo.handX);
-    const late = clamp(-early / 70, -1, 1);                     // + = late
-    const mag = late >= 0 ? 0.55 - 1.1 * late : 0.55 + 0.35 * -late;
-    aim = -sg * mag + rng.range(-0.08, 0.08);
-  }
+  if (swing.aimX != null && source === 'remote') {
+    // phone: aimX is relative to the player's own left/right; blended with the timing
+    aim = clamp(0.8 * clamp(swing.aimX, -1, 1) * hitter.facing + 0.25 * timingAim, -1, 1);
+  } else if (swing.aimX != null) aim = clamp(swing.aimX, -1, 1);
+  else aim = timingAim + rng.range(-0.08, 0.08);
   const tx = clamp(aim * xLim, -halfW + 0.15, halfW - 0.15);
   const ad = swing.aimDepth;
-  let dNet;
+  let dNet, sharpAngle = 0;
   if (kind === 'lob') {
-    const d0 = COURT.halfLength - 1.7;
+    const d0 = COURT.halfLength - (analog ? lerp(3.0, 1.2, clamp((lift - 0.6) / 0.4, 0, 1)) : 1.7);
     dNet = ad == null ? d0 : ad >= 0 ? lerp(d0, COURT.halfLength - 0.6, ad) : lerp(d0, 6.5, -ad);
   } else if (kind === 'volley') {
-    const d0 = 6.8;
+    const d0 = analog ? lerp(4.5, 9.5, lift) : 6.8;
     dNet = ad == null ? d0 : ad >= 0 ? lerp(d0, 11.0, ad) : lerp(d0, 2.3, -ad);
   } else if (kind === 'smash') {
     const d0 = 6.3;
     dNet = ad == null ? d0 : ad >= 0 ? lerp(d0, 10.6, ad) : lerp(d0, 3.5, -ad);
   } else {
-    const d0 = COURT.halfLength - STROKES[shot].mIn - 0.15 * stretch;
+    // lift sets depth (and with it the net clearance): 0 = flat through the court (~4.5 m inside), 1 = deep & high
+    const mIn = analog || label0 !== shot ? lerp(4.6, 0.9, lift) : STROKES[shot].mIn;
+    const d0 = COURT.halfLength - mIn - 0.15 * stretch;
     dNet = ad == null ? d0 : ad >= 0 ? lerp(d0, COURT.halfLength - 0.55, ad) : lerp(d0, 3.0, -ad);
+    // inside the court, a wide aim becomes a sharp short angle
+    const aimMag = swing.aimX != null ? Math.abs(swing.aimX) : Math.abs(aim);
+    const sharp = clamp((aimMag - 0.6) / 0.4, 0, 1) * clamp((-behind - 1.0) / 3, 0, 1);
+    if (ad == null) dNet -= 3.2 * sharp;
+    sharpAngle = sharp;
   }
   dNet = clamp(dNet, 2.2, COURT.halfLength - 0.4);
   const target = { x: tx, z: dirZ * dNet };
 
-  // ---- pace & spin
+  // ---- pace & spin: power -> pace (scaled by contact quality and incoming pace), spin -> rpm
   const inKmh = inSpeed * 3.6;
   let kmh;
   if (kind === 'volley') {
     kmh = lerp(25, 85, power) * 0.5 + 0.55 * inKmh * (0.7 + 0.3 * q);
     if (ad != null && ad < -0.5) kmh = lerp(28, 48, power);            // drop volley
-  } else {
+  } else if (kind === 'smash' || kind === 'lob') {
     kmh = lerp(P.v[0], P.v[1], power) * (0.75 + 0.25 * Math.pow(q, 0.7));
-    kmh += Math.min(14, (shot === 'slice' ? 0.08 : 0.15) * Math.max(0, inKmh - 70)) * (kind === 'lob' ? 0 : 1);
-    kmh *= 1 + 0.025 * clamp(-behind, 0, 3) - 0.03 * clamp(behind, 0, 4);
     kmh *= 1 - 0.35 * stretch * (kind === 'smash' ? 0.3 : 1);
-    if (shot === 'slice' && ad != null && ad < -0.5) kmh *= 0.85;      // drop shot
+  } else {
+    const vmax = 165 - 30 * Math.max(spinI, 0) - 60 * Math.max(-spinI, 0);
+    kmh = (50 + (vmax - 50) * Math.pow(power, 0.85)) * (0.72 + 0.28 * Math.pow(q, 0.7));
+    kmh += Math.min(14, (spinI < -0.3 ? 0.08 : 0.15) * Math.max(0, inKmh - 70));
+    kmh *= 1 + 0.025 * clamp(-behind, 0, 3) - 0.03 * clamp(behind, 0, 4);
+    kmh *= 1 - 0.35 * stretch;
+    if (spinI < -0.3 && ad != null && ad < -0.5) kmh *= 0.85;          // drop shot
   }
   kmh = Math.max(kind === 'smash' ? 70 : 24, kmh);
-  const spinFrac = clamp(0.3 + 0.5 * power + 0.3 * q, 0, 1);
-  let rpm = lerp(P.spin[0], P.spin[1], spinFrac);
-  const top = P.top * rpm * RPM;
-  const sideSp = (shot === 'slice' || kind === 'volley') ? (geo.side === 'fh' ? 1 : -1) * geo.handX * 0.1 * Math.abs(top) : 0;
+  let top;
+  if (kind === 'ground') {
+    const sp01 = 0.7 + 0.3 * power;
+    top = (spinI >= 0 ? 300 + 3200 * spinI * sp01 : -(300 + 2700 * -spinI * sp01)) * (0.8 + 0.2 * q) * RPM;
+  } else {
+    const spinFrac = clamp(0.3 + 0.5 * power + 0.3 * q, 0, 1);
+    top = P.top * lerp(P.spin[0], P.spin[1], spinFrac) * RPM;
+    if (kind === 'lob' && analog) top = (spinI >= 0 ? 1 : -1) * lerp(P.spin[0], P.spin[1], Math.abs(spinI)) * RPM;
+  }
+  const sideSp = (spinI < -0.3 || kind === 'volley') ? (geo.side === 'fh' ? 1 : -1) * geo.handX * 0.1 * Math.abs(top) : 0;
 
-  // ---- solve ideal launch
+  // ---- solve the intended launch
   const spec = { pos: { x: ball.pos.x, y: ball.pos.y, z: ball.pos.z }, target, speed: kmh * KMH, top, side: sideSp, surface };
+  // a hard ball that cannot clear the net to the intended depth is first hit deeper (pace -> depth), then slowed
+  if (kind === 'ground' && (ad == null || ad >= 0) && sharpAngle < 0.15) spec.deepZ = dirZ * (COURT.halfLength - 0.6);
   if (kind === 'lob') spec.elevation = lerp(60, 40, power) * D2R;
   if (kind === 'smash') spec.elMin = -70 * D2R;
   if (kind === 'volley') spec.elMin = -65 * D2R;
   const sol = solveLaunch(spec);
   let vel = sol.vel, spin = sol.spin;
 
-  // ---- error (emerges as net / out through physics)
-  let mishit = false;
+  // ---- execution error: Gaussian scatter ~ (1-q), plus mishits on poor contact (errors emerge through physics)
+  let mishit = null;
   if (!opts.noError) {
     const risk = (swing.risk ?? 1) * (kind === 'volley' ? 1.1 : 1) * (1 + 0.5 * stretch);
     const sd = noiseSd(q, risk, power, GROUND_NOISE_FLOOR, GROUND_NOISE_K);
-    mishit = q < 0.3 && rng.chance((0.3 - q) * 1.6);
-    const pt = perturb(vel, spin, sd, rng, mishit);
+    const pt = perturb(vel, spin, sd, rng, false);
     vel = pt.vel; spin = pt.spin;
+    if (q < MISHIT_Q && rng.chance(Math.min(0.75, (MISHIT_Q - q) * 1.3))) {
+      mishit = rng.weighted([['frame', 0.2 + 3 * Math.max(0, 0.4 - q)], ['floater', 0.7], ['net', 0.8], ['long', 0.8]]);
+      const m = applyMishit(vel, spin, mishit, rng);
+      vel = m.vel; spin = m.spin;
+    }
   }
   const sp = Math.hypot(vel.x, vel.y, vel.z);
   const hz = Math.hypot(vel.x, vel.z) || 1;
   const topOut = topspinOf(spin, vel.x / hz, vel.z / hz);
   return {
     vel, spin, quality: q, shot: label, kind, side: geo.side, speedKmh: sp * 3.6, spinRpm: topOut / RPM,
-    target, planned: sol.landing, plannedNetClear: sol.netClear, solved: sol.ok,
-    timingMs: -early, mishit, stretch, parts: { fTiming, fHeight, fReach, fRun, fPace, fSide, fStam },
+    target: sol.target || target, planned: sol.landing, plannedNetClear: sol.netClear, solved: sol.ok,
+    timingMs: -early, mishit, stretch, intent: { spin: spinI, lift, exec, power },
+    parts: { fExec, fTiming, fHeight, fReach, fRun, fPace, fSide, fStam },
   };
+}
+
+/** Default analog intent for the discrete shot labels (keyboard / AI). */
+export const SHOT_DEFAULTS = {
+  flat: { spin: 0.12, lift: 0.35 }, topspin: { spin: 0.72, lift: 0.5 }, slice: { spin: -0.72, lift: 0.3 }, lob: { spin: 0.35, lift: 0.95 },
+};
+const MISHIT_Q = 0.68;              // below this contact quality mishits start to happen
+
+/** Mishit outcomes: 'frame' (wild direction, low pace), 'floater' (short, high, no pace), 'net', 'long'. */
+function applyMishit(vel, spin, type, rng) {
+  const sp = Math.hypot(vel.x, vel.y, vel.z);
+  const hz = Math.hypot(vel.x, vel.z) || 1e-9;
+  let el = Math.atan2(vel.y, hz), az = 0, s = sp, ts = topspinOf(spin, vel.x / hz, vel.z / hz), side = spin.y;
+  if (type === 'frame') { az = rng.gauss(0, 0.45); el = rng.range(-0.08, 0.75); s *= rng.range(0.3, 0.55); ts *= rng.range(-0.3, 0.3); side = rng.range(-80, 80); }
+  else if (type === 'floater') { el += rng.range(0.12, 0.26); s *= rng.range(0.45, 0.65); ts *= 0.25; }
+  else if (type === 'net') { el -= rng.range(0.06, 0.13); s *= rng.range(0.8, 0.95); }
+  else { el += rng.range(0.045, 0.09); s *= rng.range(1.0, 1.08); }
+  const ux = vel.x / hz, uz = vel.z / hz, c = Math.cos(az), sn = Math.sin(az);
+  const nx = ux * c - uz * sn, nz = ux * sn + uz * c, ce = Math.cos(el);
+  return { vel: { x: s * ce * nx, y: s * Math.sin(el), z: s * ce * nz }, spin: makeSpin(nx, nz, ts, side) };
 }
 const SHOT_SET = new Set(['flat', 'topspin', 'slice', 'lob']);
 

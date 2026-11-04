@@ -4,12 +4,11 @@ import { camera } from './camera.js';
 import { renderBackground } from './court.js';
 import { renderNetLayer, drawStaticPeople } from './props.js';
 import { Crowd } from './crowd.js';
-import { SpriteFactory } from './sprites.js';
+import { SpriteFactory, SPRITE_SERVE_Q } from './sprites.js';
 import { ellipseSpans, hex, css, rgba } from './raster.js';
 import { viewBasis } from './char_model.js';
 import { dribble, tossHand, serveTime } from '../game/serve_choreo.js';
 
-const SPRITE_PHASE_Q = 48;   // sprites.js quantises serve phases to 1/48
 
 const W = RENDER.width, H = RENDER.height;
 // ball pixel diameter range scales with resolution (360p: 1-4 px, 540p: 2-5 px)
@@ -160,7 +159,7 @@ export class Renderer {
     let c;
     const a = pl.anim || {};
     if (at.held && (a.name === 'bounce' || a.name === 'serve')) {
-      const q = Math.round(Math.max(0, Math.min(1, a.phase || 0)) * SPRITE_PHASE_Q) / SPRITE_PHASE_Q;
+      const q = this.sprites.shownPhase(at.i, a.phase); // phase of the serve frame actually on screen
       const h = a.name === 'bounce' ? dribble(q).hand : tossHand(a.shot || 'flat', serveTime(q));
       c = [mir * h[0], h[1], h[2]];
     } else {

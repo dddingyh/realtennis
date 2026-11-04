@@ -52,9 +52,9 @@ console.log('contact quality factors');
 console.log('court-position effects');
 {
   const fast = (h, b, sw) => hit(h, b, { shot: 'flat', power: 1, ...sw });
-  const inside = fast(H({ pos: { x: 0, z: 9.6 } }), B({ pos: { x: 0.8, y: 0.95, z: 9.1 } }), { aimX: 1 });
-  const base = fast(H(), B(), { aimX: 1 });
-  const deep = fast(H({ pos: { x: 0, z: 15.6 } }), B({ pos: { x: 0.8, y: 0.95, z: 15.1 } }), { aimX: 1 });
+  const inside = fast(H({ pos: { x: 0, z: 9.6 } }), B({ pos: { x: 0.8, y: 0.95, z: 9.1 } }), { aimX: 1, aimDepth: 0.3 });
+  const base = fast(H(), B(), { aimX: 1, aimDepth: 0.3 });
+  const deep = fast(H({ pos: { x: 0, z: 15.6 } }), B({ pos: { x: 0.8, y: 0.95, z: 15.1 } }), { aimX: 1, aimDepth: 0.3 });
   check('inside the baseline: wider angle available than on the baseline, and far more than deep behind it; deep is slower',
     Math.abs(inside.target.x) > Math.abs(base.target.x) + 0.2 && Math.abs(base.target.x) > Math.abs(deep.target.x) + 0.3 && base.speedKmh > deep.speedKmh + 5,
     `speed ${f(inside.speedKmh, 0)}/${f(base.speedKmh, 0)}/${f(deep.speedKmh, 0)} km/h, max target x ${f(inside.target.x)}/${f(base.target.x)}/${f(deep.target.x)}`);

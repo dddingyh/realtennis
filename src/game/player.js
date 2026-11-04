@@ -162,7 +162,8 @@ export class Player {
     if (this.walkTarget && L.state === 'moving' && L.mode !== 'walk') L.mode = 'walk';
     if (order) {
       const dx = order.x - this.pos.x, dz = order.z - this.pos.z, d = Math.hypot(dx, dz);
-      if (L.state === 'set' || L.state === 'free') {
+      if ((L.state === 'set' || L.state === 'free') && this.walkTarget && d <= 0.12) this.walkTarget = null;
+      else if (L.state === 'set' || L.state === 'free') {
         if (d > (this.walkTarget ? 0.12 : PLAYER.startTol)) {
           L.state = 'moving'; L.mode = this.walkTarget ? 'walk' : this._chooseMode(dx, dz, order.timeLeft); L.modeT = 0;
         }
@@ -198,6 +199,17 @@ export class Player {
         tx = ix * k * cap * this.moveScale; tz = iz * k * cap * this.moveScale;
       } else if (sp0 < 0.3) L.state = 'set';
     }
+    // soft bounds: never run into the side/back limits or the net at full speed (brake before reaching them)
+    {
+      const fz = this.facing, bx = PLAYER.boundsSide;
+      const lim = (dist, v) => Math.min(v, Math.sqrt(2 * PLAYER.planBrake * Math.max(0, dist)));
+      if (tx > 0) tx = lim(bx - this.pos.x, tx); else if (tx < 0) tx = -lim(this.pos.x + bx, -tx);
+      const zs = this.pos.z * fz, vzs = tz * fz;                 // along the player's own half (+ = away from the net)
+      const vz2 = vzs > 0 ? lim(PLAYER.boundsBack - zs, vzs) : -lim(zs - 0.6, -vzs);
+      tz = vz2 * fz;
+    }
+    // follow-through: the feet plant and load; recovery starts only after the swing
+    if (this.swingT >= 0 && this.swingT < PLAYER.swingDur && !this.walkTarget) { tx = 0; tz = 0; }
     // ---- accelerate (drive falls off with speed; braking/turning bounded)
     const dvx = tx - vx0, dvz = tz - vz0;
     const dvm = Math.hypot(dvx, dvz);

@@ -16,6 +16,24 @@ const rotY = (p, a) => { const c = Math.cos(a), s = Math.sin(a); return [p[0] * 
 const frac = (x) => x - Math.floor(x);
 
 export const LOCO = new Set(['run', 'walk', 'shuffle', 'crossover', 'backpedal', 'brake']);
+// stance fraction of each foot per cycle (depends only on style and stride, so the main thread can reproduce it)
+export function locoSigma(name, L) {
+  switch (name) {
+    case 'shuffle': return clamp(0.30 / L + 0.02, 0.22, 0.5);
+    case 'crossover': return 0.44;
+    case 'backpedal': return 0.52;
+    case 'brake': return clamp(0.4 / L, 0.3, 0.7);
+    case 'walk': return 0.62;
+    default: return 0.35;
+  }
+}
+// planted-foot correction (metres along travel) when a frame rendered for stride Lq is shown for the true stride L:
+// the stance foot of the quantised frame sits (sigma/2 - u) * (Lq - L) away from where it belongs.
+export function strideCorrection(name, gq, Lq, L) {
+  const sig = locoSigma(name, Lq);
+  for (const off of [0, 0.5]) { const u = frac(gq + off); if (u < sig) return (sig / 2 - u) * (L - Lq); }
+  return 0;
+}
 export const DEFAULT_STRIDE = { run: 2.0, walk: 1.3, shuffle: 0.9, crossover: 1.5, backpedal: 1.0, brake: 1.2 };
 
 // world {x,z} -> final character frame (pre-mirror), see renderer/ballScreen: near: (x, -z), far: (-x, z)
@@ -45,7 +63,7 @@ function footCycle(u, sigma, L, hmax) {
 export function locoPose(anim, ctx, mk, V) {
   const name = anim.name;
   const mir = ctx.mir || 1, role = ctx.role || 'near';
-  const kx = ctx.kx || 1, kz = ctx.kz || 1;
+  const kx = ctx.kx || 1, kz = ctx.kz || 1, kzb = ctx.kzb || kz, kxz = (ctx.kxz || 0) * mir;
   const sp = clamp(anim.speed == null ? 0.6 : anim.speed, 0, 1);
   const acc = clamp(anim.accel || 0, -1, 1);
   const L = anim.strideLen || DEFAULT_STRIDE[name] || 1.5;
@@ -69,7 +87,7 @@ export function locoPose(anim, ctx, mk, V) {
   switch (name) {
     case 'shuffle': {
       // side steps facing the net: feet come together and push apart, never cross
-      sigma = clamp(0.30 / L + 0.02, 0.22, 0.5); hmax = 0.045 + 0.03 * sp; hipY = 0.74 - 0.03 * sp; lean = 0.32; bobA = 0.018;
+      sigma = locoSigma(name, L); hmax = 0.045 + 0.03 * sp; hipY = 0.74 - 0.03 * sp; lean = 0.32; bobA = 0.018;
       centres = [V(-0.20, 0, 0.0), V(0.20, 0, 0.0)]; fyaw = [-0.18, 0.18];
       side = -0.05 * latSign * sp; py = 0.12 * latSign; cy = 0.05 * latSign; hy = -0.1 * latSign;
       arms = 'ready';
@@ -77,8 +95,9 @@ export function locoPose(anim, ctx, mk, V) {
     }
     case 'crossover': {
       // hips open toward travel, shoulders stay squarer; the trailing leg crosses over in front
-      sigma = 0.44; hmax = 0.10 + 0.08 * sp; hipY = 0.78 - 0.03 * sp; lean = 0.26 + 0.15 * Math.max(0, acc); bobA = 0.03;
-      py = 0.75 * latSign; cy = 0.32 * latSign; hy = -0.25 * latSign;
+      sigma = locoSigma(name, L); hmax = 0.10 + 0.08 * sp; hipY = 0.78 - 0.03 * sp; lean = 0.26 + 0.15 * Math.max(0, acc); bobA = 0.03;
+      // (the sim already half-turns `face` toward the travel; hips open further, shoulders counter-rotate square)
+      py = 0.45 * latSign; cy = -0.12 * latSign; hy = -0.35 * latSign;
       const lead = latSign > 0 ? 1 : 0; // index of the leading foot (0 = L, 1 = R)
       centres = [V(-0.11, 0, lead === 0 ? -0.05 : 0.11), V(0.11, 0, lead === 1 ? -0.05 : 0.11)];
       fyaw = [0.8 * latSign, 0.8 * latSign];
@@ -87,7 +106,7 @@ export function locoPose(anim, ctx, mk, V) {
     }
     case 'backpedal': {
       // drop step: hips turned sideways, stepping back; shoulders turned back toward the ball
-      sigma = 0.52; hmax = 0.06 + 0.04 * sp; hipY = 0.80; lean = 0.16 - 0.1 * Math.max(0, acc); bobA = 0.02;
+      sigma = locoSigma(name, L); hmax = 0.06 + 0.04 * sp; hipY = 0.80; lean = 0.16 - 0.1 * Math.max(0, acc); bobA = 0.02;
       const sgn = rel[0] > 0.2 ? 1 : rel[0] < -0.2 ? -1 : 1;
       py = 0.95 * sgn; cy = 0.45 * sgn; hy = -0.15 * sgn; hp = 0.0;
       centres = [V(-0.13, 0, 0), V(0.13, 0, 0)].map((c) => rotY(c, py)); fyaw = [py, py];
@@ -96,23 +115,23 @@ export function locoPose(anim, ctx, mk, V) {
     }
     case 'brake': {
       // wide, low base: outside leg planted far to the travel side, torso leaning back against the motion
-      sigma = 0.88; hmax = 0.04; hipY = 0.68; lean = 0.30; bobA = 0.0;
+      sigma = locoSigma(name, L); hmax = 0.04; hipY = 0.68; lean = 0.30; bobA = 0.0;
       const tside = Math.abs(rel[0]) > Math.abs(rel[2]) ? latSign : 0;
       side = -0.20 * tside; py = 0.35 * tside; cy = 0.55 * tside; hy = 0.0;
       if (tside === 0) { lean = rel[2] > 0 ? 0.05 : 0.38; }
-      centres = [V(-0.34, 0, 0.02), V(0.34, 0, -0.02)]; fyaw = [-0.25 + 0.5 * Math.min(0, tside), 0.25 + 0.5 * Math.max(0, tside)];
+      centres = [V(-0.25, 0, 0.02), V(0.25, 0, -0.02)]; fyaw = [-0.25 + 0.5 * Math.min(0, tside), 0.25 + 0.5 * Math.max(0, tside)];
       arms = 'prep';
       break;
     }
     case 'walk': {
-      sigma = 0.62; hmax = 0.06; hipY = 0.88; lean = 0.07; bobA = 0.015;
+      sigma = locoSigma(name, L); hmax = 0.06; hipY = 0.88; lean = 0.07; bobA = 0.015;
       centres = [V(-0.09, 0, 0), V(0.09, 0, 0)];
       arms = 'walk';
       break;
     }
     case 'run':
     default: {
-      sigma = 0.40 - 0.08 * sp; hmax = 0.12 + 0.20 * sp; hipY = 0.84 - 0.05 * sp; bobA = 0.035;
+      sigma = locoSigma(name, L); hmax = 0.12 + 0.20 * sp; hipY = 0.84 - 0.05 * sp; bobA = 0.035;
       lean = 0.14 + 0.18 * sp + 0.28 * Math.max(0, acc) - 0.12 * Math.max(0, -acc);
       centres = [V(-0.085, 0, 0), V(0.085, 0, 0)];
       arms = 'drive';
@@ -125,7 +144,8 @@ export function locoPose(anim, ctx, mk, V) {
   for (let k = 0; k < 2; k++) {
     const fc = footCycle(g + (k === 0 ? 0 : 0.5), sigma, L, hmax);
     const c = rotY(centres[k], yaw);
-    const fx = c[0] + d[0] * fc.s * kx, fz = c[2] + d[1] * fc.s * kz;
+    const dz = d[1] * fc.s;
+    const fx = c[0] + d[0] * fc.s * kx + dz * kxz, fz = c[2] + dz * (dz > 0 ? kz : kzb);
     feet.push(rotY([fx, fc.y, fz], -yaw)); // back to the pre-yaw frame
     // heel-off late in stance, toe-down in early swing
     pitches.push(fc.stance ? 0.5 * smooth(clamp((fc.t - 0.65) / 0.35, 0, 1)) : 0.45 * (1 - fc.t));

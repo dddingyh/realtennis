@@ -93,10 +93,11 @@ console.log('movement');
   const p = sim.players[0]; p.walkTarget = null; p.pos.x = 0; p.pos.z = 12.4; p.vel.x = p.vel.z = 0;
   sim._setPhase('rally'); sim.ball.inPlay = false; sim.rally.lastHitTime = sim.time + 1000;
   sim.setMove(0, 1, 0);
-  let vmax = 0, a = 0;
-  for (let i = 0; i < 120 * 2; i++) { sim.step(1 / 120); vmax = Math.max(vmax, Math.hypot(p.vel.x, p.vel.z)); if (i === 11) a = p.vel.x / (12 / 120); }
+  let vmax = 0, a = 0, t90 = null;
+  for (let i = 0; i < 120 * 2; i++) { sim.step(1 / 120); const v = Math.hypot(p.vel.x, p.vel.z); vmax = Math.max(vmax, v); if (i === 5) a = p.vel.x / (6 / 120); if (t90 === null && v >= 0.9 * PLAYER.maxSpeed) t90 = (i + 1) / 120; }
   check('max speed ~6 m/s (not more)', vmax > 5.0 && vmax <= PLAYER.maxSpeed + 1e-6, f(vmax));
-  check('acceleration ~9 m/s^2', a > 6 && a < 11, f(a, 1));
+  check('explosive first step (initial acceleration 12-24 m/s^2)', a > 12 && a < 24, f(a, 1));
+  check('0 -> 90% of top speed in 0.5-0.8 s', t90 > 0.5 && t90 < 0.8, String(t90 && t90.toFixed(2)));
   sim.setMove(0, 0, 0); run(sim, 1);
   check('player stops when input released', Math.hypot(p.vel.x, p.vel.z) < 0.01);
   p.pos.x = 0; p.pos.z = 12.4; sim.setMove(0, 1, 0); run(sim, 0.5);

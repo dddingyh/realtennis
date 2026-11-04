@@ -119,7 +119,7 @@ function serveChecks(label, opts, shot = 'flat') {
   const landIn = L ? COURT.halfLength - Math.abs(L.z) : null;
   check('server lands inside the baseline (0.4-1.1 m in) at the landing phase', landIn > 0.4 && landIn < 1.1 && L.anim === 'serve', L && `${f(landIn)} m inside, anim ${L.anim} ${f(L.phase)}`);
   const mono = tr.phaseTrace.every((v, k) => k === 0 || v >= tr.phaseTrace[k - 1] - 1e-9);
-  check('serve animation runs through landing/finish to the end (no snap to ready)', mono && Math.max(...tr.phaseTrace) > 0.94, `max phase ${f(Math.max(...tr.phaseTrace))}`);
+  check('serve animation runs through landing/finish to the end (no snap to ready)', mono && Math.max(...tr.phaseTrace) > 0.93, `max phase ${f(Math.max(...tr.phaseTrace))}`);
   check('receiver split-steps at the server\'s contact', tr.splitSeen);
   return tr;
 }

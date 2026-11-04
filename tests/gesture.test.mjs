@@ -203,5 +203,132 @@ if (!SLOPPY) {
   check('rad/s gyro: second swing recognized after unit auto-switch', !!last && last.side === 'bh', JSON.stringify(last && [last.shot, last.side, last.power]));
 }
 
+
+// ---------- 8. analog outputs (DESIGN.md 6.2): each knob of the generator must be tracked monotonically ----------
+// Synthetic only: the generator and the recognizer were written by the same author, so this checks internal consistency
+// (monotonic, correctly signed, correlated), not real-world calibration of the numbers.
+function spearman(xs, ys) {
+  const rank = (a) => { const idx = a.map((v, i) => [v, i]).sort((p, q) => p[0] - q[0]); const r = new Array(a.length);
+    for (let i = 0; i < idx.length;) { let j = i; while (j + 1 < idx.length && idx[j + 1][0] === idx[i][0]) j++; for (let k = i; k <= j; k++) r[idx[k][1]] = (i + j) / 2; i = j + 1; } return r; };
+  const rx = rank(xs), ry = rank(ys), n = xs.length, mx = rx.reduce((a, b) => a + b, 0) / n, my = ry.reduce((a, b) => a + b, 0) / n;
+  let sxy = 0, sxx = 0, syy = 0; for (let i = 0; i < n; i++) { sxy += (rx[i] - mx) * (ry[i] - my); sxx += (rx[i] - mx) ** 2; syy += (ry[i] - my) ** 2; }
+  return sxy / Math.sqrt(sxx * syy || 1);
+}
+const COMBOS = [];
+for (const hand of ['R', 'L']) for (const side of SIDES) for (const hz of [60, 100]) COMBOS.push({ hand, side, hz, flip: (COMBOS.length % 3) === 1 });
+let aSeed = 200000;
+function sweep(knob, levels, { shot = 'flat', fixed = {}, reps = 1 } = {}) {
+  const rows = [];
+  for (const lv of levels) for (const c of COMBOS) for (let r = 0; r < reps; r++) {
+    const { samples, truth } = genSwingTrace({ shot, ...c, seed: aSeed++, ...fixed, [knob]: lv });
+    const e = runTrace(samples, c.hand).events.filter((x) => x.type === 'swing');
+    rows.push({ lv, c, truth, e: e.length === 1 ? e[0] : null });
+  }
+  const ok = rows.filter((r) => r.e);
+  const means = (f) => levels.map((lv) => { const a = ok.filter((r) => r.lv === lv).map((r) => f(r)); return a.reduce((x, y) => x + y, 0) / (a.length || 1); });
+  const rho = (f, xf = (r) => r.lv) => spearman(ok.map(xf), ok.map(f));
+  return { rows, ok, means, rho, detected: ok.length / rows.length };
+}
+const fmt = (a) => a.map((x) => x.toFixed(2)).join(' ');
+const analogRes = {};
+function report(name, sw, f, minAbsRho, expectSign, xf) {
+  const r = sw.rho(f, xf), m = sw.means(f);
+  analogRes[name] = { rho: +r.toFixed(3), means: m.map((x) => +x.toFixed(3)), detected: sw.detected };
+  check(`${name}: rho ${r.toFixed(2)} (want ${expectSign > 0 ? '>=' : '<='} ${expectSign * minAbsRho}), level means [${fmt(m)}], detected ${(sw.detected * 100).toFixed(0)}%`,
+    expectSign * r >= minAbsRho && sw.detected >= 0.95);
+  return { r, m };
+}
+console.log('\n--- analog outputs vs generator knobs (synthetic) ---');
+{
+  const sw = sweep('speed', [0.6, 0.8, 1.0, 1.2, 1.4]);
+  report('speed -> power', sw, (r) => r.e.power, 0.85, 1);
+  report('speed -> speedDps', sw, (r) => r.e.speedDps, 0.85, 1);
+}
+{
+  const sw = sweep('contactYaw', [-25, -12, 0, 12, 25], { shot: 'flat' });
+  // ground truth: horizontal face direction at contact (+ = player's right). Early contact (+contactYaw) turns the face across
+  // the body: right-hander forehand -> left (cross-court), backhand -> right (cross-court); mirrored for left-handers.
+  report('contact yaw -> aimX (vs true face direction)', sw, (r) => r.e.aimX, 0.85, 1, (r) => r.truth.aimDeg);
+  const err = sw.ok.map((r) => Math.abs(r.e.feat.aimDeg - r.truth.aimDeg)).sort((a, b) => a - b);
+  analogRes.aimErrDeg = { median: err[err.length >> 1], p90: err[Math.floor(err.length * 0.9)] };
+  check(`aim error deg: median ${err[err.length >> 1].toFixed(1)}, p90 ${err[Math.floor(err.length * 0.9)].toFixed(1)}`, err[Math.floor(err.length * 0.9)] < 15);
+  const early = (hand, side) => { const a = sw.ok.filter((r) => r.lv === 25 && r.c.hand === hand && r.c.side === side).map((r) => r.e.aimX); return a.reduce((x, y) => x + y, 0) / a.length; };
+  const cr = { 'R fh': early('R', 'fh'), 'R bh': early('R', 'bh'), 'L fh': early('L', 'fh'), 'L bh': early('L', 'bh') };
+  check(`early contact = cross-court sign: R-fh ${cr['R fh'].toFixed(2)}<0, R-bh ${cr['R bh'].toFixed(2)}>0, L-fh ${cr['L fh'].toFixed(2)}>0, L-bh ${cr['L bh'].toFixed(2)}<0`,
+    cr['R fh'] < -0.4 && cr['R bh'] > 0.4 && cr['L fh'] > 0.4 && cr['L bh'] < -0.4);
+  for (const shot of ['topspin', 'slice', 'lob']) {
+    const s2 = sweep('contactYaw', [-20, 0, 20], { shot });
+    report(`contact yaw -> aimX (${shot})`, s2, (r) => r.e.aimX, 0.8, 1, (r) => r.truth.aimDeg);
+  }
+}
+{
+  const sw = sweep('pathDeg', [-25, -12, 0, 12, 25, 38], { fixed: { faceDeg: 5, rollDps: 0 } });
+  report('path elevation -> lift', sw, (r) => r.e.lift, 0.85, 1);
+  report('path elevation -> spin (face fixed)', sw, (r) => r.e.spin, 0.85, 1);
+}
+{
+  const sw = sweep('faceDeg', [-20, -10, 0, 10, 20, 30], { fixed: { pathDeg: 8, rollDps: 0 } });
+  report('face tilt (open +) -> spin', sw, (r) => r.e.spin, 0.85, -1);
+  report('face tilt -> lift (should not move)', sw, (r) => r.e.lift, -1, 1);   // informational: lift is path-only
+}
+{
+  const sw = sweep('rollDps', [-300, -150, 0, 150, 300], { fixed: { pathDeg: 8, faceDeg: 0 } });
+  report('wrist roll (closing -) -> spin', sw, (r) => r.e.spin, 0.7, -1);
+}
+{
+  const sw = sweep('jerk', [0, 0.25, 0.5, 0.75, 1]);
+  const { m } = report('jerkiness -> exec', sw, (r) => r.e.exec, 0.8, -1);
+  check(`very jerky swing graded poorly (exec ${m[4].toFixed(2)} < 0.5) and clean well (${m[0].toFixed(2)} > 0.85)`, m[4] < 0.5 && m[0] > 0.85);
+}
+{
+  const sw = sweep('truncate', [0, 0.25, 0.5, 0.75, 1]);
+  const { m } = report('truncated follow-through -> exec', sw, (r) => r.e.exec, 0.8, -1);
+  check(`fully truncated swing graded poorly (exec ${m[4].toFixed(2)} < 0.5)`, m[4] < 0.5);
+}
+{
+  // clean archetype swings of every type should get a good execution grade
+  const all = [];
+  for (const shot of SHOTS) { const sw = sweep('speed', [1], { shot }); for (const r of sw.ok) all.push([shot, r.e.exec]); }
+  for (const shot of SHOTS) { const a = all.filter((x) => x[0] === shot).map((x) => x[1]).sort((p, q) => p - q); analogRes['cleanExec_' + shot] = a[a.length >> 1];
+    check(`clean ${shot}: median exec ${a[a.length >> 1].toFixed(2)} >= 0.85`, a[a.length >> 1] >= 0.85); }
+}
+{
+  // within-class continuity: light vs heavy topspin are both "topspin" but spin/lift differ
+  const light = sweep('pathDeg', [15], { shot: 'topspin', fixed: { faceDeg: -5, rollDps: -80 }, reps: 2 });
+  const heavy = sweep('pathDeg', [32], { shot: 'topspin', fixed: { faceDeg: -15, rollDps: -220 }, reps: 2 });
+  const mean = (sw, f) => sw.ok.reduce((a, r) => a + f(r), 0) / sw.ok.length;
+  const lt = mean(light, (r) => (r.e.shot === 'topspin' ? 1 : 0)), ht = mean(heavy, (r) => (r.e.shot === 'topspin' ? 1 : 0));
+  const ls = mean(light, (r) => r.e.spin), hs = mean(heavy, (r) => r.e.spin), ll = mean(light, (r) => r.e.lift), hl = mean(heavy, (r) => r.e.lift);
+  analogRes.lightVsHeavyTopspin = { light: { topspinRate: lt, spin: ls, lift: ll }, heavy: { topspinRate: ht, spin: hs, lift: hl } };
+  check(`light vs heavy topspin: labelled topspin ${(lt * 100).toFixed(0)}% / ${(ht * 100).toFixed(0)}%, spin ${ls.toFixed(2)} -> ${hs.toFixed(2)}, lift ${ll.toFixed(2)} -> ${hl.toFixed(2)}`,
+    lt >= 0.7 && ht >= 0.7 && hs - ls >= 0.15 && hl > ll);
+}
+{
+  // user calibration normalises spin: a user's own topspin/slice centroids map near +-0.75
+  const hand = 'R';
+  const rec = createRecognizer({ hand });
+  let sd = 300000;
+  for (const shot of SHOTS) for (let i = 0; i < 3; i++) {
+    const { samples } = genSwingTrace({ shot, side: i % 2 ? 'bh' : 'fh', hand, hz: 60, seed: sd++, speed: 0.8 });
+    const ev = runTrace(samples, hand).events.find((e) => e.type === 'swing');
+    if (ev) rec.addCalibrationSwing(shot, ev);
+  }
+  const cal = rec.exportCalibration();
+  const res = {};
+  for (const shot of SHOTS) {
+    const a = [];
+    for (let i = 0; i < 8; i++) {
+      const { samples } = genSwingTrace({ shot, side: i % 2 ? 'bh' : 'fh', hand, hz: 60, seed: sd++, speed: 0.8 });
+      const e = runTrace(samples, hand, JSON.parse(JSON.stringify(cal))).events.find((x) => x.type === 'swing');
+      if (e) a.push(e);
+    }
+    res[shot] = { spin: a.reduce((x, e) => x + e.spin, 0) / a.length, lift: a.reduce((x, e) => x + e.lift, 0) / a.length, power: a.reduce((x, e) => x + e.power, 0) / a.length };
+  }
+  analogRes.calibrated = res;
+  check(`calibrated spin: topspin ${res.topspin.spin.toFixed(2)}, flat ${res.flat.spin.toFixed(2)}, slice ${res.slice.spin.toFixed(2)}; lift lob ${res.lob.lift.toFixed(2)}; slow user's drive power ${res.flat.power.toFixed(2)}`,
+    res.topspin.spin > 0.5 && res.slice.spin < -0.5 && Math.abs(res.flat.spin) < 0.35 && res.lob.lift > 0.6 && res.flat.power > 0.6);
+}
+if (process.argv.includes('--json')) console.log(JSON.stringify(analogRes, null, 1));
+
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED');
 process.exit(failures ? 1 : 0);

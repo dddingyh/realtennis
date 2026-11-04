@@ -210,6 +210,7 @@ export class Simulation {
       ageMs: clamp(p.ageMs || 0, 0, 150),
       source: p.source === 'remote' || p.source === 'ai' ? p.source : 'keyboard',
       risk: p.risk, edge: p.edge,
+      spin: Number.isFinite(p.spin) ? p.spin : null, lift: Number.isFinite(p.lift) ? p.lift : null, exec: Number.isFinite(p.exec) ? p.exec : null,
     };
   }
 
@@ -484,7 +485,7 @@ export class Simulation {
     const kmh = res.speedKmh;
     this.stats.maxServeKmh[i] = Math.max(this.stats.maxServeKmh[i], Math.round(kmh));
     if (this.faultCount === 0) this.stats.firstServesTotal[i]++;
-    this.lastShot = { by: i, shot: 'serve', side: null, speedKmh: kmh, spinRpm: res.spinRpm, quality: res.quality, timingMs: 0, serveType: res.shot };
+    this.lastShot = { by: i, shot: 'serve', side: null, speedKmh: kmh, spinRpm: res.spinRpm, quality: res.quality, timingMs: 0, serveType: res.shot, mishit: res.mishit ? 'frame' : null };
     this.state.lastShot = this.lastShot;
     this._emit({ type: 'serve', by: i, speedKmh: kmh, pos: { x: b.pos.x, y: b.pos.y, z: b.pos.z } });
     this._emit({ type: 'hit', by: i, shot: res.shot, side: null, power: p.power, quality: res.quality, speedKmh: kmh, spinRpm: res.spinRpm, pos: { x: b.pos.x, y: b.pos.y, z: b.pos.z }, serve: true });
@@ -583,10 +584,10 @@ export class Simulation {
     pl.startSwing(res.shot, res.side);
     pl.prepared = null;
     this.rally.shots++; this.rally.touched[i] = true; this.rally.lastHitTime = this.time; this.rally.lastQ = res.quality;
-    this.lastShot = { by: i, shot: res.shot, side: res.side, speedKmh: res.speedKmh, spinRpm: res.spinRpm, quality: res.quality, timingMs: res.timingMs, stretch: res.stretch, incomingKmh: inKmh, target: res.target };
+    this.lastShot = { by: i, shot: res.shot, side: res.side, speedKmh: res.speedKmh, spinRpm: res.spinRpm, quality: res.quality, timingMs: res.timingMs, stretch: res.stretch, incomingKmh: inKmh, target: res.target, mishit: res.mishit, intent: res.intent };
     this.state.lastShot = this.lastShot;
     this.sideStats[i][res.side].n++;
-    this._emit({ type: 'hit', by: i, shot: res.shot, side: res.side, power: p.power, quality: res.quality, speedKmh: res.speedKmh, spinRpm: res.spinRpm, pos: { x: b.pos.x, y: b.pos.y, z: b.pos.z } });
+    this._emit({ type: 'hit', by: i, shot: res.shot, side: res.side, power: p.power, quality: res.quality, mishit: res.mishit, speedKmh: res.speedKmh, spinRpm: res.spinRpm, pos: { x: b.pos.x, y: b.pos.y, z: b.pos.z } });
     // latency compensation: re-simulate forward to the present
     if (st.hist && st.ageMs > 0.5) {
       const n = Math.max(1, Math.ceil(st.ageMs / 1000 / PHYSICS.fixedDt));
@@ -736,7 +737,7 @@ export class Simulation {
     let errKind = null;
     if (reason === 'out' || reason === 'net') {
       const q = this.rally.lastQ;
-      const forced = q < 0.5 || (ls && (ls.stretch > 0.6 || (ls.incomingKmh > 135 && q < 0.7)));
+      const forced = q < 0.55 || (ls && (ls.stretch > 0.4 || ls.mishit === 'frame' || (ls.incomingKmh > 115 && q < 0.75)));
       errKind = forced ? 'forced' : 'unforced';
       if (forced) st.forcedErrors[loser]++; else st.unforcedErrors[loser]++;
       if (ls && ls.side && ls.by === loser) this.sideStats[loser][ls.side].err++;
