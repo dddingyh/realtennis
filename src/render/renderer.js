@@ -102,7 +102,12 @@ export class Renderer {
     const items = [];
     items.push({ z: 0, kind: 'net' });
     for (let i = 0; i < 2; i++) items.push({ z: state.players[i].pos.z, kind: 'player', i });
-    if (b.visible) items.push({ z: b.pos.z, kind: 'ball' });
+    if (b.visible) {
+      // a tossed/struck serve above the server's head is drawn over the server (it is above, not behind, the body)
+      const at = b.attach;
+      const over = at && !at.held && b.pos.y > 1.9 && state.players[at.i];
+      items.push({ z: over ? state.players[at.i].pos.z + 0.01 : b.pos.z, kind: 'ball' });
+    }
     items.sort((p, q) => p.z - q.z);
     for (const it of items) {
       if (it.kind === 'net') ctx.drawImage(this.netLayer, 0, 0);

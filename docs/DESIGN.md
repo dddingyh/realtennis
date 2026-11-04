@@ -65,7 +65,9 @@ sim.swing(i, {
   ageMs: 0,                // how long ago the swing physically happened (latency compensation, ≤150ms)
   source: 'keyboard'|'remote'
 });
-sim.serveToss(i)          // optional explicit toss; if not called, swing() during serve does toss+hit automatically
+sim.serveToss(i, {shot}?) // optional explicit toss (shot picks the toss: flat/topspin=kick/slice); if not called, swing()
+                          // during serve-prep does toss+hit automatically. A request during a ball bounce waits until the
+                          // ball is back in the hand. sim.serverReady(i): routine finished, ball held.
 sim.pause(bool)
 sim.drainEvents()  -> Event[]   // events since last drain
 sim.state                       // read-only snapshot, see below
@@ -82,7 +84,13 @@ sim.state                       // read-only snapshot, see below
     inPlay: bool,
     bounces: 0|1|2,             // bounces since last hit
     lastHitBy: 0|1|-1,
-    marks: [{x,z,age}]          // recent bounce marks (clay shows them longer)
+    marks: [{x,z,age}],         // recent bounce marks (clay shows them longer)
+    attach: null | { i, held, mode:'routine'|'toss'|'hit', k, O },
+                                // ball tied to server i's serve choreography (src/game/serve_choreo.js):
+                                // held = in the tossing hand; k = 1 while held/bounced/tossed, fades to 0 over
+                                // 0.12 s after contact. The renderer draws an attached ball with the server's
+                                // sprite transform (held: at the hand of the exact quantised pose) so hand and
+                                // ball always coincide on screen.
   },
   players: [ {
     pos:{x,z}, vel:{x,z},       // feet on ground, y=0
@@ -91,10 +99,16 @@ sim.state                       // read-only snapshot, see below
     isHuman: bool,
     name, look: { skin, hair, shirt, shorts, shoes, headband|null },  // CSS hex colors
     anim: {
-      name: 'ready'|'idle'|'run'|'split'|'swing'|'serve'|'celebrate'|'dejected'|'walk',
+      name: 'ready'|'idle'|'run'|'split'|'swing'|'serve'|'bounce'|'celebrate'|'dejected'|'walk',
       shot: 'flat'|'topspin'|'slice'|'lob'|'volley'|'smash'|null,
       side: 'fh'|'bh'|null,
-      phase: 0..1,              // swing/serve progress; 0.5 = ball contact; serve: 0.0 setup, 0.3 toss, 0.5 trophy, 0.65 contact, 1 finish
+      phase: 0..1,              // swing/serve progress; 0.5 = ball contact; serve: 0.0 setup, 0.12 arms drop,
+                                // 0.30 toss release, 0.50 trophy (ball apex), 0.57 racket drop, 0.65 contact,
+                                // 0.76 landing inside the baseline, 0.88 finish, 1 recovered.
+                                // 'bounce' = pre-serve ball bounce, phase 0..1 per bounce (0 = ball held at rest,
+                                // identical to serve phase 0). For 'serve', shot = toss type 'flat'|'topspin'|'slice'.
+                                // Timeline + toss-hand path: src/game/serve_choreo.js (also used by render/pose.js).
+                                // sprites.js has no 'bounce' key yet: renderer.js draws it as {name:'serve', shot:'bounce'}.
       dir: {x,z},               // run direction unit vector (for run anim)
       speed: 0..1               // normalized run speed
     },

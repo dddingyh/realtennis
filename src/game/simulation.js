@@ -381,7 +381,7 @@ export class Simulation {
     this.players[1 - i].walkTarget = null;
     const type = shot === 'topspin' || shot === 'slice' || shot === 'flat' ? shot : (this.faultCount > 0 ? 'topspin' : 'flat');
     const O = { x: pl.pos.x, z: pl.pos.z };
-    this.toss = { t: 0, tm: 0, type, O, hit: false, hitT: 0, auto: auto ? { params, hitAt: SERVE_T.contact + this.rngMisc.range(-0.012, 0.012) } : null };
+    this.toss = { t: 0, tm: 0, type, O, hit: false, hitT: 0, auto: auto ? { params, hitAt: SERVE_T.contact + this.rngMisc.range(-0.004, 0.004) } : null };
     pl.routine = null;
     pl.serve = { phase: 0, type, free: false };
     pl.syncAnim();
@@ -430,8 +430,11 @@ export class Simulation {
       const w = toWorld(pl, sv.O, ro);
       const v = vecToWorld(pl, [(ro2[0] - ro[0]) / 1e-3, 0, (ro2[2] - ro[2]) / 1e-3]);
       pl.pos.x = w.x; pl.pos.z = w.z; pl.vel.x = v.x; pl.vel.z = v.z;
-      if (tm >= SERVE_T.land) { sv.free = true; pl.moveScale = 1; }
-    } else if (Math.hypot(pl.vel.x, pl.vel.z) > 2.2 && tm > SERVE_T.land + 0.1) {
+      // control returns at landing for humans and net rushers; baseliners finish the follow-through first
+      const ai = this.ais[pl.index];
+      const freeAt = !ai || ai.netMode ? SERVE_T.land : SERVE_T.finish;
+      if (tm >= freeAt) { sv.free = true; pl.moveScale = 1; }
+    } else if (Math.hypot(pl.vel.x, pl.vel.z) > 2.2 && tm > (this.ais[pl.index] && !this.ais[pl.index].netMode ? SERVE_T.finish + 0.2 : SERVE_T.land + 0.1)) {
       sv.done = true;                                             // running on (serve & volley): run animation
     }
     if (tm >= SERVE_T.end || sv.done) {
@@ -471,6 +474,8 @@ export class Simulation {
     this.rally.serveLet = false;
     t.tm = SERVE_T.contact;
     if (!pl.serve) pl.serve = { phase: 0, type: t.type, free: false };
+    const ro = rootOffset(SERVE_T.contact), w = toWorld(pl, t.O, ro);
+    pl.pos.x = w.x; pl.pos.z = w.z;                                // body exactly at the contact pose
     Object.assign(pl.serve, { hit: true, hitT: this.time, O: { ...t.O }, type: t.type, phase: servePhase(SERVE_T.contact) });
     pl.syncAnim();
     pl.walkTarget = null;
