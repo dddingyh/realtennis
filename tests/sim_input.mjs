@@ -34,7 +34,7 @@ console.log('keyboard');
   check('detach removes the listeners', sim.players[0].manual.x === 0);
 
   // serve with space: down = toss, up = hit
-  const sim2 = new Simulation({ autoMove: ['off', 'off'], aiStyle: 'grinder', seed: 6, timing: T, firstServer: 0 });
+  const sim2 = new Simulation({ autoMove: ['off', 'off'], aiStyle: 'grinder', seed: 6, timing: T, firstServer: 0, timeScale: 1 });
   const t2 = new EventTarget(); let c2 = 0;
   attachKeyboard(sim2, 0, t2, { now: () => c2 });
   for (let i = 0; i < 1200 && !sim2.canServe(0); i++) sim2.step(1 / 120);

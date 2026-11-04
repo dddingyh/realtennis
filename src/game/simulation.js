@@ -6,7 +6,7 @@ import { createBall, stepBall } from '../physics/ball.js';
 import { RNG } from './rng.js';
 import { Match } from './match.js';
 import { Player, PLAYER, pickLook } from './player.js';
-import { computeHit, computeServe, contactGeometry, isReachable, serviceBox, inBox, inSinglesCourt, IDEAL_F } from './shot.js';
+import { computeHit, computeServe, contactGeometry, isReachable, serviceBox, inBox, inSinglesCourt, IDEAL_F, classifyContact } from './shot.js';
 import { predictPath, planInterception } from './predict.js';
 import { AIController } from './ai.js';
 import { SERVE_T, STAND_BEHIND, DRIBBLE, dribble, tossBall, servePhase, rootOffset, contactPoint, toWorld, vecToWorld, HAND_REST } from './serve_choreo.js';
@@ -23,7 +23,9 @@ export const DEFAULT_TIMING = {
   dribbles: [2, 4],      // pre-serve ball bounces (AI server); first serve. Second serve uses [1, 2].
   dribblesHuman: [2, 3], // human server (the human can serve as soon as the ball is back in the hand)
 };
-const HISTORY = 40;                 // ball history ring entries (~330 ms at 120 Hz)
+/** Default game speed (sim seconds per real second), DESIGN §7.3. */
+export const DEFAULT_TIME_SCALE = 0.85;
+const HISTORY = 48;                 // ball history ring entries (~330 ms at 120 Hz)
 const BUFFER_MS = { keyboard: 150, ai: 100, remote: 240 };
 const RALLY_TIMEOUT = 20;           // s watchdog
 const SERVING_TIMEOUT = 8;
@@ -48,6 +50,7 @@ export class Simulation {
     this.rngAI = this.rng.fork();
     this.rngMisc = this.rng.fork();
     this.time = 0;
+    this.timeScale = clamp(opts.timeScale ?? DEFAULT_TIME_SCALE, 0.5, 1.0);
     this.phaseT = 0;
     this.paused = false;
     this.events = [];
@@ -89,7 +92,7 @@ export class Simulation {
     this._recov = [null, null];
     this.stats = this._newStats();
     this.state = {
-      time: 0, surface: this.surfaceKey, ball: this.ball, players: this.players,
+      time: 0, timeScale: this.timeScale, surface: this.surfaceKey, ball: this.ball, players: this.players,
       match: {
         phase: 'serve-prep', server: 0, serveCourt: 'deuce', faultCount: 0, points: [0, 0], games: [0, 0], sets: [],
         setsWon: [0, 0], isTiebreak: false, pointText: '0-0', winner: null, stats: this.stats,
@@ -104,13 +107,15 @@ export class Simulation {
 
   // ================================================================= public API
   /** Advance the simulation by dt seconds (pass 1/PHYSICS.simHz). */
-  step(dt) {
+  step(realDt) {
     if (this.paused) return;
+    const dt = realDt * this.timeScale;          // game speed (§7.3): the whole world runs slower, km/h stay real
     this.time += dt; this.phaseT += dt;
     this._phaseUpdate(dt);
     for (const ai of this.ais) if (ai) ai.update(dt);
     this._applyIntents(dt);
     const inPoint = this.phase === 'serving' || this.phase === 'rally';
+    this._plannedContacts();
     for (const p of this.players) {
       p.update(dt, { inPoint, ready: this.phase === 'serve-prep' });
       if (p.buffered) this._updateBuffered(p);
@@ -121,6 +126,9 @@ export class Simulation {
     for (const p of this.players) p.updateRacket(this.ball.pos);
     this._syncState();
   }
+
+  /** Game speed: sim seconds per real second (0.7..1.0; default 0.85). */
+  setTimeScale(v) { this.timeScale = clamp(+v || DEFAULT_TIME_SCALE, 0.5, 1.0); this.state.timeScale = this.timeScale; }
 
   /** Continuous move intent for player i, x,z in [-1,1] (x right, z toward camera). */
   setMove(i, x, z) {
@@ -207,7 +215,7 @@ export class Simulation {
       side: p.side || pl.prepared?.side || 'auto',
       power: clamp(p.power ?? 0.7, 0, 1),
       aimX: p.aimX ?? null, aimDepth: p.aimDepth ?? null,
-      ageMs: clamp(p.ageMs || 0, 0, 150),
+      ageMs: clamp(p.ageMs || 0, 0, 150) * this.timeScale,     // real ms -> sim ms
       source: p.source === 'remote' || p.source === 'ai' ? p.source : 'keyboard',
       risk: p.risk, edge: p.edge,
       spin: Number.isFinite(p.spin) ? p.spin : null, lift: Number.isFinite(p.lift) ? p.lift : null, exec: Number.isFinite(p.exec) ? p.exec : null,
@@ -565,7 +573,8 @@ export class Simulation {
 
   _whiff(i, p, emit) {
     const pl = this.players[i];
-    if (pl.cooldown <= 0) pl.startSwing(p.shot, p.side === 'auto' ? 'fh' : p.side);
+    const ci = this.ball.visible ? classifyContact(pl, this.ball, p.side === 'auto' ? null : p.side) : null;
+    if (pl.cooldown <= 0) pl.startSwing(p.shot, ci ? ci.side : (p.side === 'auto' ? 'fh' : p.side), ci);
     if (emit) this._emit({ type: 'whiff', by: i });
   }
 
@@ -581,13 +590,13 @@ export class Simulation {
     b.spin.x = res.spin.x; b.spin.y = res.spin.y; b.spin.z = res.spin.z;
     b.bounces = 0; b.rolling = false; b.netHit = false; b.lastHitBy = i; b.inPlay = true;
     this.hitCount++;
-    pl.startSwing(res.shot, res.side);
+    pl.startSwing(res.shot, res.side, { contact: res.contact, variant: res.variant, reachT: res.reachT, side: res.side });
     pl.prepared = null;
     this.rally.shots++; this.rally.touched[i] = true; this.rally.lastHitTime = this.time; this.rally.lastQ = res.quality;
-    this.lastShot = { by: i, shot: res.shot, side: res.side, speedKmh: res.speedKmh, spinRpm: res.spinRpm, quality: res.quality, timingMs: res.timingMs, stretch: res.stretch, incomingKmh: inKmh, target: res.target, mishit: res.mishit, intent: res.intent };
+    this.lastShot = { by: i, shot: res.shot, side: res.side, speedKmh: res.speedKmh, spinRpm: res.spinRpm, quality: res.quality, timingMs: res.timingMs, stretch: res.stretch, incomingKmh: inKmh, target: res.target, mishit: res.mishit, intent: res.intent, variant: res.variant, contact: res.contact, reachT: res.reachT };
     this.state.lastShot = this.lastShot;
     this.sideStats[i][res.side].n++;
-    this._emit({ type: 'hit', by: i, shot: res.shot, side: res.side, power: p.power, quality: res.quality, mishit: res.mishit, speedKmh: res.speedKmh, spinRpm: res.spinRpm, pos: { x: b.pos.x, y: b.pos.y, z: b.pos.z } });
+    this._emit({ type: 'hit', by: i, shot: res.shot, side: res.side, power: p.power, quality: res.quality, mishit: res.mishit, variant: res.variant, contact: res.contact, speedKmh: res.speedKmh, spinRpm: res.spinRpm, pos: { x: b.pos.x, y: b.pos.y, z: b.pos.z } });
     // latency compensation: re-simulate forward to the present
     if (st.hist && st.ageMs > 0.5) {
       const n = Math.max(1, Math.ceil(st.ageMs / 1000 / PHYSICS.fixedDt));
@@ -770,6 +779,18 @@ export class Simulation {
   }
 
   // ================================================================= movement intents / auto-move
+  /** §7.1: while a backswing is held, expose the PLANNED contact (from the interception plan) for the stroke animation. */
+  _plannedContacts() {
+    for (let i = 0; i < 2; i++) {
+      const pl = this.players[i];
+      if (!pl.prepared || pl.swingT >= 0) continue;
+      const plan = this.ais[i] ? this.ais[i].plan : (this._plan(i) || {}).plan;
+      const b = plan ? { pos: plan.ball } : (this.ball.inPlay ? this.ball : null);
+      if (!b) continue;
+      pl.contactInfo = classifyContact(pl, b, pl.prepared.side || (plan && plan.side) || null);
+    }
+  }
+
   _applyIntents(dt) {
     for (let i = 0; i < 2; i++) {
       const pl = this.players[i];

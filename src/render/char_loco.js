@@ -139,6 +139,13 @@ export function locoPose(anim, ctx, mk, V) {
     }
   }
 
+  // ---- archetype: leg length / stance width / posture (travel offsets below stay exact: planting)
+  const A = ctx.archP;
+  if (A) {
+    hipY = hipY * A.h * A.leg - (name === 'shuffle' || name === 'brake' ? A.drop : 0);
+    lean += A.lean;
+    if (name === 'shuffle' || name === 'brake') centres = centres.map((c) => [c[0] * A.stance, c[1], c[2] * A.stance]);
+  }
   // ---- feet (final frame), stance feet locked to the ground
   const feet = [], pitches = [];
   for (let k = 0; k < 2; k++) {
@@ -161,6 +168,7 @@ export function locoPose(anim, ctx, mk, V) {
     cy: cy - (name === 'run' || name === 'walk' ? 0.24 * Math.sin(ph) * (name === 'walk' ? 0.5 : 1) : 0.03 * Math.sin(ph)),
     hy, hp, fL: feet[0], fR: feet[1], fLy: fyaw[0], fRy: fyaw[1], fLp: pitches[0], fRp: pitches[1], yaw,
   });
+  p.__loco = true;
   // ---- arms
   const cg = Math.cos(ph);
   if (arms === 'drive') {

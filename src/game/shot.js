@@ -66,6 +66,39 @@ export function isReachable(geo, source = 'keyboard', hitter) {
   return geo.latAbs <= reach && geo.fwd >= fwdMin && geo.fwd <= fwdMax && geo.y >= 0.08 && geo.y <= SMASH_REACH_Y;
 }
 
+/** Thresholds for the stroke variants (DESIGN §7.1). */
+export const VARIANT = { stretchReach: 0.45, jamLat: 0.40, jamFwd: -0.35, runSpeed: 3.0, high: 1.45, low: 0.45, deepBehind: 2.0, heavyPace: 28 };
+
+/**
+ * Classify a (planned or actual) contact: ball position in the player's local frame and the stroke variant.
+ * @param {{pos,vel,facing,hand}} h hitter
+ * @param {{pos:{x,y,z}, vel?}} ball ball at contact
+ * @param {'fh'|'bh'|null} side stroke side (null = from geometry)
+ * @param {{defensive?:boolean, kind?:string}} o
+ * @returns {{contact:{lat,fwd,h}, variant:string, reachT:number, side:'fh'|'bh'}}
+ *   lat: + toward the stroke's hitting side; fwd: + in front of the body; h: height. reachT 0 comfortable .. 1 lunge limit.
+ */
+export function classifyContact(h, ball, side = null, o = {}) {
+  const geo = contactGeometry(h, { pos: ball.pos, vel: ball.vel || { x: 0, y: 0, z: 0 } });
+  const sd = side === 'fh' || side === 'bh' ? side : geo.side;
+  const lat = sd === 'fh' ? geo.lat : -geo.lat;
+  const maxR = REACH[sd] + LUNGE;
+  const reachT = clamp((lat - 1.0) / (maxR - 1.0), 0, 1);
+  const speed = h.vel ? Math.hypot(h.vel.x, h.vel.z) : 0;
+  const behind = Math.abs(h.pos.z) - COURT.halfLength;
+  const inSp = ball.vel ? Math.hypot(ball.vel.x, ball.vel.y, ball.vel.z) : 0;
+  const y = ball.pos.y;
+  const ground = !o.kind || o.kind === 'ground' || o.kind === 'lob';
+  let variant = 'normal';
+  if (reachT > VARIANT.stretchReach) variant = 'stretch';
+  else if (lat < VARIANT.jamLat || geo.fwd < VARIANT.jamFwd) variant = 'jammed';
+  else if (o.defensive || (ground && behind > VARIANT.deepBehind && inSp > VARIANT.heavyPace)) variant = 'defensive';
+  else if (speed > VARIANT.runSpeed) variant = 'run';
+  else if (ground && y > VARIANT.high) variant = 'high';
+  else if (y < VARIANT.low) variant = 'low';
+  return { contact: { lat, fwd: geo.fwd, h: y }, variant, reachT, side: sd };
+}
+
 function heightFactor(y, band, penHigh) {
   if (y < band[0]) return 1 - 0.5 * clamp((band[0] - y) / (band[0] - 0.12), 0, 1);
   if (y > band[1]) return Math.max(0.2, 1 - penHigh * clamp((y - band[1]) / 1.0, 0, 1.4));
@@ -168,11 +201,11 @@ export function solveLaunch(spec) {
 }
 
 // ---------------------------------------------------------------- error model
-function perturb(vel, spin, sd, rng, mishit) {
+function perturb(vel, spin, sd, rng, mishit, elBias = 0) {
   // rotate velocity by azimuth/elevation noise; scale speed
   const sp = Math.hypot(vel.x, vel.y, vel.z);
   const hz = Math.hypot(vel.x, vel.z) || 1e-9;
-  let el = Math.atan2(vel.y, hz) + sd.el * rng.gauss();
+  let el = Math.atan2(vel.y, hz) + sd.el * rng.gauss() + elBias;
   let az = sd.az * rng.gauss();
   let s = sp * (1 + sd.v * rng.gauss());
   if (mishit) { el += rng.range(-0.15, 0.45); az += rng.gauss(0, 0.18); s *= rng.range(0.55, 1.05); }
@@ -249,6 +282,15 @@ export function computeHit(inp) {
   q = clamp(q, 0.02, 1);
   if (opts.forceQuality != null) q = opts.forceQuality;
   const stretch = Math.max(clamp((geo.latAbs - 1.0) / 0.45, 0, 1), 0.8 * clamp((hSpeed - 4.6) / 1.4, 0, 1));
+  // ---- stroke variant (§7.1): the outcome follows where the ball is relative to the body
+  const cls = classifyContact(hitter, ball, swing.side && swing.side !== 'auto' ? swing.side : geo.side, { defensive: !!swing.defensive, kind });
+  const V = cls.variant;
+  const awaySpeed = (hitter.vel.z || 0) * hitter.facing;         // + = moving back, away from the net
+  const hiF = V === 'high' && behind > -0.3 && spinI > -0.3 ? clamp((y - VARIANT.high) / 0.8, 0.15, 1) : 0;
+  const lowF = V === 'low' ? clamp((VARIANT.low - y) / 0.3, 0.2, 1) : 0;
+  const vPace = (V === 'jammed' ? 0.72 : 1) * (V === 'defensive' ? 0.85 : 1) * (V === 'run' && awaySpeed > 1.5 ? 0.88 : 1) * (1 - 0.22 * hiF);
+  const vRisk = (V === 'run' ? 1.35 : 1) * (V === 'defensive' ? 0.85 : 1) * (1 + 0.6 * stretch);
+  const vAim = V === 'stretch' ? 1 - 0.45 * stretch : V === 'defensive' ? 0.7 : V === 'jammed' ? 0.8 : 1;
 
   // ---- target: direction from aim (+timing), depth from lift (or explicit aimDepth)
   const kA = clamp(1 - 0.08 * clamp(behind, 0, 4) - 0.3 * stretch + 0.05 * clamp(-behind, 0, 4) + (kind === 'volley' ? 0.12 : 0), 0.45, 1.2);
@@ -266,7 +308,7 @@ export function computeHit(inp) {
     aim = clamp(0.8 * clamp(swing.aimX, -1, 1) * hitter.facing + 0.25 * timingAim, -1, 1);
   } else if (swing.aimX != null) aim = clamp(swing.aimX, -1, 1);
   else aim = timingAim + rng.range(-0.08, 0.08);
-  const tx = clamp(aim * xLim, -halfW + 0.15, halfW - 0.15);
+  const tx = clamp(aim * vAim * xLim, -halfW + 0.15, halfW - 0.15);
   const ad = swing.aimDepth;
   let dNet, sharpAngle = 0;
   if (kind === 'lob') {
@@ -306,14 +348,16 @@ export function computeHit(inp) {
     kmh = (50 + (vmax - 50) * Math.pow(power, 0.85)) * (0.72 + 0.28 * Math.pow(q, 0.7));
     kmh += Math.min(14, (spinI < -0.3 ? 0.08 : 0.15) * Math.max(0, inKmh - 70));
     kmh *= 1 + 0.025 * clamp(-behind, 0, 3) - 0.03 * clamp(behind, 0, 4);
-    kmh *= 1 - 0.35 * stretch;
+    kmh *= (1 - 0.35 * stretch) * vPace;
     if (spinI < -0.3 && ad != null && ad < -0.5) kmh *= 0.85;          // drop shot
   }
   kmh = Math.max(kind === 'smash' ? 70 : 24, kmh);
   let top;
   if (kind === 'ground') {
     const sp01 = 0.7 + 0.3 * power;
-    top = (spinI >= 0 ? 300 + 3200 * spinI * sp01 : -(300 + 2700 * -spinI * sp01)) * (0.8 + 0.2 * q) * RPM;
+    // stretched: hard to brush up heavy topspin; high balls flatten out
+    const sEff = spinI > 0 ? spinI * (1 - 0.5 * stretch) * (1 - 0.3 * hiF) : spinI;
+    top = (sEff >= 0 ? 300 + 3200 * sEff * sp01 : -(300 + 2700 * -sEff * sp01)) * (0.8 + 0.2 * q) * RPM;
   } else {
     const spinFrac = clamp(0.3 + 0.5 * power + 0.3 * q, 0, 1);
     top = P.top * lerp(P.spin[0], P.spin[1], spinFrac) * RPM;
@@ -334,12 +378,15 @@ export function computeHit(inp) {
   // ---- execution error: Gaussian scatter ~ (1-q), plus mishits on poor contact (errors emerge through physics)
   let mishit = null;
   if (!opts.noError) {
-    const risk = (swing.risk ?? 1) * (kind === 'volley' ? 1.1 : 1) * (1 + 0.5 * stretch);
+    const risk = (swing.risk ?? 1) * (kind === 'volley' ? 1.1 : 1) * vRisk;
     const sd = noiseSd(q, risk, power, GROUND_NOISE_FLOOR, GROUND_NOISE_K);
-    const pt = perturb(vel, spin, sd, rng, false);
+    // a low ball needs lift: a flat path from below the net line drags the ball down
+    const lowBias = lowF * clamp(0.45 - lift, 0, 0.45) * (spinI > 0.3 ? 1.5 : spinI < -0.3 ? 0.3 : 1) * 4.5 * D2R;
+    const pt = perturb(vel, spin, sd, rng, false, -lowBias);
     vel = pt.vel; spin = pt.spin;
-    if (q < MISHIT_Q && rng.chance(Math.min(0.75, (MISHIT_Q - q) * 1.3))) {
-      mishit = rng.weighted([['frame', 0.2 + 3 * Math.max(0, 0.4 - q)], ['floater', 0.7], ['net', 0.8], ['long', 0.8]]);
+    const qm = q - (V === 'jammed' ? 0.15 : 0) - (V === 'stretch' ? 0.08 * stretch : 0);
+    if (qm < MISHIT_Q && rng.chance(Math.min(0.75, (MISHIT_Q - qm) * 1.3))) {
+      mishit = rng.weighted([['frame', 0.2 + 3 * Math.max(0, 0.4 - qm) + (V === 'jammed' ? 0.6 : 0)], ['floater', 0.7], ['net', 0.8], ['long', 0.8]]);
       const m = applyMishit(vel, spin, mishit, rng);
       vel = m.vel; spin = m.spin;
     }
@@ -351,6 +398,7 @@ export function computeHit(inp) {
     vel, spin, quality: q, shot: label, kind, side: geo.side, speedKmh: sp * 3.6, spinRpm: topOut / RPM,
     target: sol.target || target, planned: sol.landing, plannedNetClear: sol.netClear, solved: sol.ok,
     timingMs: -early, mishit, stretch, intent: { spin: spinI, lift, exec, power },
+    contact: cls.contact, variant: V, reachT: cls.reachT,
     parts: { fExec, fTiming, fHeight, fReach, fRun, fPace, fSide, fStam },
   };
 }

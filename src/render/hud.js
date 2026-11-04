@@ -13,6 +13,8 @@ const CJK = Math.round(12 * U);
 const PANEL = '#0c1424', EDGE = '#3c4d70', GOLD = '#f2c230', WHITE = '#f4f4ee', DIM = '#8fa0c0';
 const SHOT_CN = { flat: '平击', topspin: '上旋', slice: '切削', lob: '挑高', volley: '截击', smash: '高压', serve: '发球' };
 const SIDE_CN = { fh: '正手', bh: '反手' };
+const VARIANT_CN = { stretch: '救球', jammed: '被挤压', run: '跑动中', high: '高点', low: '低点', defensive: '防守' };
+const MISHIT_CN = { frame: '打框' };   // any other truthy mishit -> 质量差
 const CALL_COL = { OUT: '#ff4d4d', FAULT: '#ffd23f', 'DOUBLE FAULT': '#ff7a3a', ACE: '#4de1ff', LET: '#ffffff', 'NOT UP': '#ffd23f', GAME: GOLD, SET: GOLD, MATCH: '#7dff9a', 'GAME SET MATCH': '#7dff9a' };
 
 function ptsLabel(m, i) {
@@ -35,6 +37,27 @@ export class Hud {
       if (e.type === 'call' && e.text) this.pushCall(e.text);
       else if (e.type === 'score' && (e.text === 'GAME' || e.text === 'SET' || e.text === 'MATCH')) this.pushCall(e.text === 'MATCH' ? 'GAME SET MATCH' : e.text, 1.9);
       else if (e.type === 'serve') this.serveInfo = { kmh: Math.round(e.speedKmh), t: 0, by: e.by };
+      if (e.type === 'hit') {
+        this.hitVariant = { v: e.variant || e.anim?.variant || null, t: 0 };
+        if (e.mishit) this.pushSmall(MISHIT_CN[e.mishit] || '质量差', e.mishit === 'frame' ? '#ffb347' : '#ff8a7a', e.by);
+      }
+    }
+  }
+  // small CJK call that floats above the hitting player for ~1 s
+  pushSmall(text, color, by) { this.small = this.small || []; this.small.push({ text, color, by, t: 0 }); if (this.small.length > 2) this.small.shift(); }
+  smallDraw(ctx, state, dt) {
+    if (!this.small?.length) return;
+    for (let i = this.small.length - 1; i >= 0; i--) { const c = this.small[i]; c.t += dt; if (c.t > 1.2) this.small.splice(i, 1); }
+    for (const c of this.small) {
+      const pl = state.players?.[c.by];
+      let x = W / 2, y = u(110);
+      if (pl?.pos) { const p = camera.project(pl.pos.x, 2.35, pl.pos.z); x = p.sx; y = p.sy - u(10); }
+      const size = Math.round(CJK * (c.by === 0 ? 1.25 : 1.0));
+      const w = measureText(c.text, size, true);
+      const rise = Math.round(Math.min(1, c.t / 0.25) * u(8));
+      ctx.globalAlpha = c.t > 0.9 ? Math.max(0, (1.2 - c.t) / 0.3) : 1;
+      drawText(ctx, c.text, Math.round(x - w / 2), Math.round(y - rise - size), c.color, size, { bold: true, outline: '#0a0a12' });
+      ctx.globalAlpha = 1;
     }
   }
   pushCall(text, dur = 1.5) { this.calls.push({ text, t: 0, dur }); if (this.calls.length > 3) this.calls.shift(); }
@@ -58,13 +81,14 @@ export class Hud {
   mainW(str) { return textWidth(str, 1, FMAIN); }
 
   draw(ctx, state, dt, ui = {}) {
-    this.t += dt;
+    this.t += dt; this._dt = dt;
     const m = state.match;
     if (this.serveInfo) { this.serveInfo.t += dt; if (this.serveInfo.t > 4) this.serveInfo = null; }
     if (m && ui.hudOn !== false) this.scoreBug(ctx, state, ui);
     this.lastShot(ctx, state);
     this.timingRing(ctx, state, ui);
     this.callsDraw(ctx, dt);
+    this.smallDraw(ctx, state, dt);
     if (ui.phoneMode) this.phoneIcon(ctx, ui.phoneStatus);
   }
 
@@ -140,7 +164,17 @@ export class Hud {
     ctx.fillStyle = mine ? (state.players[0].look?.shirt || '#e23d3d') : (state.players[1].look?.shirt || '#f2c230');
     ctx.fillRect(x + 1, y + 1, u(3), h - 2);
     const cn = `${SHOT_CN[ls.shot] || ls.shot}${ls.side ? ' ' + (SIDE_CN[ls.side] || '') : ''}`;
-    drawText(ctx, cn, x + u(9), y + u(3), WHITE, CJK, { shadow: '#000', bold: BIG });
+    const cnW = drawText(ctx, cn, x + u(9), y + u(3), WHITE, CJK, { shadow: '#000', bold: BIG });
+    // stroke variant (from lastShot, else from the hit event) shown for a few seconds when not 'normal'
+    if (ls !== this.lsRef) { this.lsRef = ls; this.lsT = 0; }
+    this.lsT = (this.lsT || 0) + (this._dt || 0);
+    const variant = ls.variant || ls.anim?.variant || this.hitVariant?.v || null;
+    if (variant && variant !== 'normal' && VARIANT_CN[variant] && this.lsT < 3.0) {
+      const tag = VARIANT_CN[variant], ts = Math.round(CJK * 0.85);
+      const tx = x + u(9) + cnW + u(6), tw = measureText(tag, ts, false) + u(6);
+      ctx.fillStyle = '#ffb347'; ctx.fillRect(tx, y + u(4), tw, ts + u(3));
+      drawText(ctx, tag, tx + u(3), y + u(4) + 1, '#1a1405', ts, {});
+    }
     const who = mine ? 'YOU' : 'OPP';
     drawPixText(ctx, who, x + w - textWidth(who) - u(6), y + u(6), mine ? '#ff8a8a' : '#ffe27a', 1);
     const rowY = y + u(19);

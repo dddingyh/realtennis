@@ -15,22 +15,22 @@ import { SERVE_T } from './serve_choreo.js';
  */
 export const STYLES = {
   grinder: {
-    name: '底线型', attack: 0.25, shortBy: 2.4, approach: 0.04, lobMul: 0.8, dropP: 0.02, mix: { topspin: 0.78, slice: 0.17, flat: 0.05 },
+    name: '底线型', construct: 0.7, attack: 0.25, shortBy: 2.4, approach: 0.04, lobMul: 0.8, dropP: 0.05, mix: { topspin: 0.78, slice: 0.17, flat: 0.05 },
     power: [0.55, 0.78], attackPower: [0.75, 0.9], base: 1.5, prefDepth: 1.0, prefY: 1.0, timeBias: 0.25, netZ: 3.6,
     serve: { flat: 0.2, slice: 0.45, topspin: 0.35 }, serveNet: [0.0, 0.0], cross: 0.7, edge: 0.3, volleyOK: false,
   },
   aggressive: {
-    name: '进攻型', attack: 0.75, shortBy: 0.2, approach: 0.45, lobMul: 0.5, dropP: 0.08, mix: { topspin: 0.35, slice: 0.05, flat: 0.6 },
+    name: '进攻型', construct: 0.5, attack: 0.75, shortBy: 0.2, approach: 0.45, lobMul: 0.5, dropP: 0.12, mix: { topspin: 0.35, slice: 0.05, flat: 0.6 },
     power: [0.72, 0.95], attackPower: [0.88, 1.0], base: -0.3, prefDepth: -0.6, prefY: 0.85, timeBias: -0.8, netZ: 3.2,
     serve: { flat: 0.7, slice: 0.3, topspin: 0.0 }, serveNet: [0.0, 0.0], cross: 0.5, edge: 0.5, volleyOK: true,
   },
   serveVolley: {
-    name: '发球上网', attack: 0.55, shortBy: 0.9, approach: 0.6, lobMul: 0.5, dropP: 0.1, mix: { topspin: 0.25, slice: 0.4, flat: 0.35 },
+    name: '发球上网', construct: 0.4, attack: 0.55, shortBy: 0.9, approach: 0.6, lobMul: 0.5, dropP: 0.14, mix: { topspin: 0.25, slice: 0.4, flat: 0.35 },
     power: [0.62, 0.85], attackPower: [0.8, 0.95], base: 0.6, prefDepth: 0.3, prefY: 0.9, timeBias: -0.4, netZ: 3.0,
     serve: { flat: 0.55, slice: 0.45, topspin: 0.0 }, serveNet: [0.88, 0.45], cross: 0.5, edge: 0.45, volleyOK: true,
   },
   counter: {
-    name: '防守反击型', attack: 0.3, shortBy: 2.6, approach: 0.05, lobMul: 1.8, dropP: 0.03, mix: { topspin: 0.5, slice: 0.4, flat: 0.1 },
+    name: '防守反击型', construct: 0.45, attack: 0.3, shortBy: 2.6, approach: 0.05, lobMul: 1.8, dropP: 0.07, mix: { topspin: 0.5, slice: 0.4, flat: 0.1 },
     power: [0.5, 0.75], attackPower: [0.75, 0.92], base: 2.4, prefDepth: 2.0, prefY: 1.0, timeBias: 0.5, netZ: 3.6,
     serve: { flat: 0.1, slice: 0.5, topspin: 0.4 }, serveNet: [0.0, 0.0], cross: 0.75, edge: 0.25, volleyOK: false,
   },
@@ -54,7 +54,7 @@ export class AIController {
     this.reactAt = 0;
     this.plan = null; this.planKey = -1;
     this.swingMs = 0;
-    this.netMode = false; this.wantNet = false;
+    this.netMode = false; this.wantNet = false; this.lastDir = 0;
     this.recKey = -1; this.recTarget = null;
     this.serveParams = null;
     this.serveHist = { deuce: [], ad: [] };
@@ -155,7 +155,7 @@ export class AIController {
       this.seenHit = sim.hitCount;
       const react = lerp(0.36, 0.12, this.level) * (sim.rally.shots === 1 ? 0.7 : 1);
       this.reactAt = sim.time + react * sim.rngAI.range(0.85, 1.15);
-      this.plan = null; this.planKey = -1;
+      this.plan = null; this.planKey = -1; this.pending = null;
       this.swingMs = sim.rngAI.gauss(0, 8 + 58 * (1 - this.level));
     }
     if (sim.time < this.reactAt) { if (this.netMode) this._recoverMove(1); else this._stop(); return; }   // split step, read the ball
@@ -191,30 +191,49 @@ export class AIController {
 
   _maybeSwing(p) {
     const sim = this.sim, me = this.me, b = sim.ball;
-    if (me.cooldown > 0 || me.swingT >= 0 || sim.phase !== 'rally') return;
-    if (b.bounces !== p.bounces) return;
+    if (me.cooldown > 0 || me.swingT >= 0 || (sim.phase !== 'rally' && sim.phase !== 'serving')) return;
+    // backswing ~0.35 s before the planned contact: decide the shot from the PLANNED contact geometry
+    const tLeft = p.t - (sim.time - this.planTime);
+    if (!this.pending && tLeft < 0.35 && tLeft > -0.2) {
+      const dToStand = Math.hypot(p.stand.x - me.pos.x, p.stand.z - me.pos.z);
+      const reachable = Math.min(1, (PLAYER.maxSpeed * Math.max(0, tLeft)) / Math.max(0.01, dToStand));
+      const at = { pos: { x: me.pos.x + (p.stand.x - me.pos.x) * reachable, z: me.pos.z + (p.stand.z - me.pos.z) * reachable }, vel: me.vel, facing: me.facing, hand: me.hand };
+      const geoP = contactGeometry(at, { pos: p.ball, vel: b.vel });
+      this.pending = this._decide(geoP, p);
+      sim.prepare(this.i, { shot: this.pending.shot, side: geoP.side });
+    }
+    if (sim.phase !== 'rally' || b.bounces !== p.bounces) return;
     const geo = contactGeometry(me, b);
     if (geo.fwd < -0.75) return;                              // ball already past
     const ms = geo.tEarly * 1000;
     if (ms > this.swingMs) return;
     if (geo.latAbs > 1.75 || geo.y > 3.0) return;             // hopeless: do not swing
-    const d = this._decide(geo);
+    // re-decide if the real contact turned out much worse than planned (e.g. stretched): defend
+    let d = this.pending || this._decide(geo);
+    if (this.pending && geo.latAbs > 1.2 && !this.pending.defensive) d = this._decide(geo);
+    this.pending = null;
     sim.swing(this.i, { ...d, source: 'ai', ageMs: 0 });
   }
 
   // ------------------------------------------------------------ shot selection
-  _decide(geo) {
+  /**
+   * Shot selection. `p` = interception plan when deciding at the start of the backswing (planned contact), else the
+   * decision uses the actual contact.
+   */
+  _decide(geo, p = null) {
     const sim = this.sim, me = this.me, opp = sim.players[this.o], b = sim.ball, S = this.S, L = this.level, rng = sim.rngAI;
-    const y = b.pos.y;
-    const netD = Math.abs(me.pos.z), behind = netD - COURT.halfLength;
+    const y = p ? p.ball.y : b.pos.y;
+    const netD = Math.abs(p ? p.stand.z : me.pos.z), behind = netD - COURT.halfLength;
     const oppNetD = Math.abs(opp.pos.z);
-    const oppAtNet = oppNetD < 6.2, oppDeep = oppNetD > COURT.halfLength + 1.2;
+    const oppAtNet = oppNetD < 6.2, oppDeep = oppNetD > COURT.halfLength + 1.2, oppVeryDeep = oppNetD > COURT.halfLength + 2.2;
     const inKmh = Math.hypot(b.vel.x, b.vel.y, b.vel.z) * 3.6;
-    const hSpeed = Math.hypot(me.vel.x, me.vel.z);
+    const hSpeed = p ? (p.feasible ? 0.5 : 5) : Math.hypot(me.vel.x, me.vel.z);
     const stretch = Math.max(clamp((geo.latAbs - 1.0) / 0.45, 0, 1), 0.8 * clamp((hSpeed - 4.6) / 1.4, 0, 1));
-    const volleyZone = b.bounces === 0 && netD < 6.8;
-    const smashBall = y > 1.9 && netD < 9.5 && b.vel.y < 2.5;
-    const oppX = opp.pos.x;
+    const bounces = p ? p.bounces : b.bounces;
+    const volleyZone = bounces === 0 && netD < 6.8;
+    const smashBall = y > 1.9 && netD < 9.5 && (p || b.vel.y < 2.5);
+    // where the opponent will be (he is recovering): open court is the other side
+    const oppX = opp.pos.x + opp.vel.x * 0.35;
     const weak = sim.weakness(this.o);
     const bhDir = -opp.handX;                                        // x direction of opponent's backhand side
     const weakDir = weak.weaker === 'bh' ? bhDir : weak.weaker === 'fh' ? -bhDir : 0;
@@ -236,10 +255,11 @@ export class AIController {
         d = { shot: 'flat', power: lerp(0.5, 0.8, S.attack), aimX: openSide * rng.range(0.6, 0.95), aimDepth: oppDeep ? rng.range(-0.1, 0.25) : rng.range(0.2, 0.6), edge: 0.5 };
       }
     } else if (stretch > 0.55 || (y > 1.5 && behind > 0.3) || (inKmh > 128 && behind > 1.2 && stretch > 0.25)) {
-      // defensive reply
-      if (oppAtNet && rng.chance(0.55 * S.lobMul)) d = { shot: 'lob', power: 0.5, aimX: -sgn(oppX) * 0.35, aimDepth: 0.4, edge: 0.15 };
-      else if (this.styleName === 'counter' || rng.chance(0.55)) d = { shot: 'slice', power: 0.42, aimX: -mySgn * 0.45, aimDepth: 0.55, edge: 0.12 };
-      else d = { shot: 'topspin', power: 0.45, aimX: -mySgn * 0.4, aimDepth: 0.6, edge: 0.12 };
+      // defensive reply: reset the point with a high deep ball or a slice (lob a net rusher)
+      if (oppAtNet && rng.chance(0.55 * S.lobMul)) d = { shot: 'lob', power: 0.5, aimX: -sgn(oppX) * 0.35, aimDepth: 0.4, edge: 0.15, defensive: true };
+      else if (this.styleName === 'counter' || rng.chance(0.55)) d = { shot: 'slice', power: 0.42, aimX: -mySgn * 0.45, aimDepth: 0.55, edge: 0.12, defensive: true };
+      else d = { shot: 'topspin', power: 0.45, aimX: -mySgn * 0.3, aimDepth: 0.75, edge: 0.12, defensive: true };   // high, deep
+      this.lastDir = 0;
     } else if (oppAtNet) {
       const lobP = (stretch > 0.3 ? 0.45 : 0.18) * S.lobMul * (oppNetD < 3.2 ? 1.3 : 1) * (y < 1.5 ? 1 : 0.4);
       if (rng.chance(lobP)) {
@@ -249,9 +269,14 @@ export class AIController {
         d = { shot: rng.chance(0.55) ? 'topspin' : 'flat', power: lerp(0.65, 0.9, S.attack), aimX: (Math.abs(oppX) > 0.7 ? -sgn(oppX) : openSide) * dtl, aimDepth: rng.range(-0.1, 0.25), edge: 0.6 };
       }
     } else {
-      const short = netD < COURT.halfLength - S.shortBy && y > 0.55 && y < 1.55 && stretch < 0.5 && inKmh < 125;
-      const atk = short ? clamp(S.attack * (0.55 + 0.6 * L) * (netD < COURT.halfLength - 4 ? 1.3 : 1), 0, 0.95) : 0;
-      if (short && rng.chance(S.approach * (0.5 + 0.7 * L) * (netD < COURT.halfLength - 2.2 ? 1.2 : 0.6))) {
+      // weak reply: short, or slow and sitting up -> step in and attack
+      const weakBall = inKmh < 75 && y > 0.7 && y < 1.4 && stretch < 0.4;
+      const short = (netD < COURT.halfLength - S.shortBy || weakBall) && y > 0.55 && y < 1.55 && stretch < 0.5 && inKmh < 125;
+      const atk = short ? clamp(S.attack * (0.55 + 0.6 * L) * (netD < COURT.halfLength - 4 ? 1.3 : 1) * (weakBall ? 1.25 : 1), 0, 0.95) : 0;
+      const dropOk = oppVeryDeep && behind < 0.8 && stretch < 0.3 && y > 0.6 && y < 1.35 && !sloppy;
+      if (dropOk && rng.chance(S.dropP * (0.6 + 0.8 * L) * (behind < -1 ? 1.8 : 1))) {
+        d = { shot: 'slice', power: 0.35, aimX: openSide * rng.range(0.2, 0.6), aimDepth: -1, edge: 0.3 };          // drop shot
+      } else if (short && rng.chance(S.approach * (0.5 + 0.7 * L) * (netD < COURT.halfLength - 2.2 ? 1.2 : 0.6))) {
         // approach shot: deep, usually down the line to the open side, then go to the net
         this.wantNet = true;
         d = { shot: this.styleName === 'aggressive' ? 'flat' : 'slice', power: rng.range(0.55, 0.75), aimX: openSide * rng.range(0.5, 0.8), aimDepth: rng.range(0.45, 0.8), edge: 0.35 };
@@ -262,8 +287,10 @@ export class AIController {
         const shot = rng.weighted(Object.entries(S.mix));
         let aimX;
         const exploit = weakDir !== 0 && rng.chance(0.3 + 0.35 * L);
-        if (exploit) aimX = clamp((oppX + weakDir * 2.3) / XSCALE, -0.9, 0.9);
-        else if (Math.abs(oppX) > 1.4 && rng.chance(0.65)) aimX = -sgn(oppX) * rng.range(0.65, 0.95);   // behind the opponent
+        const pulled = Math.abs(oppX) > 1.4;
+        if (pulled && rng.chance(0.55 + 0.35 * L)) aimX = -sgn(oppX) * rng.range(0.7, 0.95);              // open court
+        else if (this.lastDir && rng.chance(S.construct * (0.4 + 0.6 * L))) aimX = -this.lastDir * rng.range(0.65, 0.9);   // side to side
+        else if (exploit) aimX = clamp((oppX + weakDir * 2.3) / XSCALE, -0.9, 0.9);
         else if (rng.chance(S.cross)) aimX = -mySgn * rng.range(0.55, 0.9);                              // cross-court
         else aimX = mySgn * rng.range(0.5, 0.85);                                                        // change direction
         d = { shot, power: pw(S.power), aimX, aimDepth: shot === 'slice' ? rng.range(0.15, 0.5) : rng.range(0.1, 0.45), edge: S.edge };
@@ -271,6 +298,7 @@ export class AIController {
         if (shot === 'topspin' && sim.rally.shots > 8 && rng.chance(0.12)) d.shot = 'slice';
       }
     }
+    this.lastDir = d.aimX > 0.3 ? 1 : d.aimX < -0.3 ? -1 : 0;
     const tired = clamp((sim.rally.shots - 10) / 18, 0, 1);       // long rallies: someone has to take a risk
     if (tired > 0 && !volleyZone) { d.power = Math.min(1, d.power + 0.15 * tired); d.edge = Math.min(1, (d.edge ?? 0.4) + 0.3 * tired); }
     if (sloppy) { d.power = Math.min(1, d.power + 0.12); d.edge = Math.min(1, (d.edge ?? 0.4) + 0.3); }

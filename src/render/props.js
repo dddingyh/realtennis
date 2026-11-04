@@ -345,9 +345,4 @@ export function drawStaticPeople(pb, surface = 'hard') {
   box(pb, 6.5, 0, -0.05, 0.24, 0.2, 0.2, hex('#2a303c'));
   // net ball kid on the far side of the net at the umpire-side post (seen through the mesh)
   person(pb, 6.0, -0.45, { ...K, skin: '#9a6038', hair: '#111', crouch: true });
-  // back-corner ball kids: two behind each baseline, near the back wall, outside the doubles sidelines
-  person(pb, -7.4, -ZB + 0.9, { ...K });
-  person(pb, 7.4, -ZB + 0.9, { ...K, skin: '#c98a5b' });
-  person(pb, -7.9, 16.2, { ...K, skin: '#f1c9a5', hair: '#6b4423' });
-  person(pb, 7.9, 16.2, { ...K, skin: '#e0a97c', hair: '#c8a24a' });
 }

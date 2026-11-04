@@ -38,6 +38,7 @@ h2::before { content: ""; width: 8px; height: 8px; background: var(--gold); disp
 @media (max-width: 760px) { .menu-grid { grid-template-columns: 1fr; } .logo h1 { font-size: 26px; } }
 
 .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.cards3 { grid-template-columns: 1fr 1fr 1fr; }
 .card { text-align: left; padding: 8px 9px; background: var(--panel2); border: 3px solid #2a3a6c; color: var(--ink); cursor: pointer; font: inherit; box-shadow: 3px 3px 0 #05080f; }
 .card b { display: block; font-size: 14px; color: #fff; }
 .card i { font-style: normal; font-size: 11px; color: var(--dim); display: block; margin-top: 2px; line-height: 1.35; }

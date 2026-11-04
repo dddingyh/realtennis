@@ -4,7 +4,7 @@ import { Renderer } from './render/renderer.js';
 import { Hud } from './render/hud.js';
 import { Sfx } from './audio/sfx.js';
 import { PhoneLink } from './ui/phone.js';
-import { createMenu, loadSettings } from './ui/menu.js';
+import { createMenu, loadSettings, looksFor } from './ui/menu.js';
 import { createScreens } from './ui/screens.js';
 
 const $ = (id) => document.getElementById(id);
@@ -68,12 +68,13 @@ async function startGame(c) {
   if (!kbMod) await loadKeyboard();
   renderer.setSurface(c.surface);
   if (kbDetach) { try { kbDetach(); } catch (e) { /* ignore */ } kbDetach = null; }
-  const opts = { surface: c.surface, aiStyle: c.aiStyle, aiLevel: c.aiLevel, format: c.format, playerNames: c.playerNames, autoMove: c.autoMove, humanHand: c.humanHand, seed: (Math.random() * 1e9) | 0 };
+  const opts = { surface: c.surface, aiStyle: c.aiStyle, aiLevel: c.aiLevel, format: c.format, playerNames: c.playerNames, autoMove: c.autoMove, humanHand: c.humanHand, timeScale: c.timeScale ?? 0.85, looks: c.looks, seed: (Math.random() * 1e9) | 0 };
   try { sim = new SimClass(opts); } catch (e) {
     console.error('Simulation failed, falling back to stub:', e);
     if (!StubClass) StubClass = (await import('./ui/dev_stub_sim.js')).Simulation;
     usedStub = true; sim = new StubClass(opts);
   }
+  applyLooks(sim, c.looks);
   // pause hook: whatever toggles pause (keyboard.js, our buttons) ends up here
   const origPause = sim.pause?.bind(sim);
   sim.pause = (b) => { origPause?.(b); setPaused(!!b); };
@@ -87,6 +88,18 @@ async function startGame(c) {
   menuUI.hide(); mode = 'playing';
   document.body.dataset.mode = 'playing';
   window.__rt.sim = sim;
+}
+// Make sure the chosen kits/archetypes reach the players even if the sim picked its own looks.
+function applyLooks(sm, looks) {
+  if (!Array.isArray(looks)) return;
+  for (let i = 0; i < 2; i++) {
+    const L = looks[i]; if (!L) continue;
+    for (const obj of [sm.players?.[i], sm.state?.players?.[i]]) {
+      if (!obj) continue;
+      if (obj.look && typeof obj.look === 'object') { if (obj.look.archetype !== L.archetype) Object.assign(obj.look, L); }
+      else obj.look = { ...L };
+    }
+  }
 }
 function toMenu() {
   mode = 'menu'; paused = false; sim = null; window.__rt.sim = null;
@@ -215,6 +228,7 @@ async function boot() {
       surface: params.get('surface') || c.surface, aiStyle: params.get('style') || c.style, aiLevel: +(params.get('level') || 0.5),
       format: params.get('format') === 'bo3' ? { sets: 3, gamesPerSet: 4, tiebreak: true, shortGames: true } : { sets: 1, gamesPerSet: 6, tiebreak: true, shortGames: false },
       humanHand: params.get('hand') || c.hand, autoMove: [params.get('auto') || c.auto, 'off'], playerNames: ['你', 'AI'], control: params.get('control') || 'keyboard', timingOffsetMs: 0, sound: false, speech: false,
+      timeScale: +(params.get('speed') || c.speed || 0.85), looks: looksFor(params.get('arch0') || c.arch0, params.get('arch1') || c.arch1),
     });
   } else menuUI.show();
 }

@@ -9,6 +9,7 @@
 import { SERVE_T, TOSS, serveTime, tossHand, contactPoint, rootOffset, dribble, PALM_BELOW_BALL } from '../game/serve_choreo.js';
 const TAU = Math.PI * 2;
 import { locoPose } from './char_loco.js';
+import { ARCHETYPES, bodyFor, archPose, strokeStyle, strokeTweak, adaptContact, contactTarget, contactWeight } from './char_arch.js';
 export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -354,6 +355,39 @@ function gait(phase, dir, speed, walk) {
 // ------------------------------------------------------------------ public: pose for an anim
 // ctx: { runPhase 0..1, time, role: 'near'|'far' }
 export function poseFor(anim, ctx = {}) {
+  const A = ARCHETYPES[ctx.arch] || ARCHETYPES.classic;
+  const name = anim.name || 'ready';
+  if (name === 'swing') return swingPose(anim, A);
+  const P = poseForBase(anim, { ...ctx, archP: A });
+  // serve / bounce: the tossing hand follows the serve choreography (absolute), locomotion scales itself (char_loco)
+  if (name === 'serve' || name === 'bounce' || P.__loco) return P;
+  return archPose(P, A, name);
+}
+
+// stroke for an archetype, adapted to the planned contact point / variant (DESIGN.md §7.1)
+const S0cache = new Map();
+function strokeBase(shot, side, ph, A) {
+  const tr = STROKES[`${shot}|${side}`] || STROKES[`topspin|${side}`];
+  const st = strokeStyle(A, shot, side, ph);
+  let P = sample(tr, st.p);
+  for (const [k, w] of st.blends) if (STROKES[k]) P = mixPose(P, sample(STROKES[k], st.p), w);
+  P = strokeTweak(P, A, shot, side, ph, READY);
+  return archPose(P, A, 'swing');
+}
+function swingPose(anim, A) {
+  const shot = anim.shot || 'topspin', side = anim.side || 'fh';
+  const ph = clamp(anim.phase || 0, 0, 1);
+  let P = strokeBase(shot, side, ph, A);
+  if (anim.contact || (anim.variant && anim.variant !== 'normal')) {
+    const ck = `${shot}|${side}|${Object.keys(ARCHETYPES).find((k) => ARCHETYPES[k] === A)}`;
+    let S0 = S0cache.get(ck);
+    if (!S0) { const B = strokeBase(shot, side, 0.5, A); const ax = norm(B.ax); S0 = add(B.hD, mul(ax, RACKET_HEAD)); S0cache.set(ck, S0); }
+    P = adaptContact(P, anim, ph, S0, A, (pp) => strokeBase(shot, side, pp, A));
+  }
+  return P;
+}
+
+function poseForBase(anim, ctx = {}) {
   const name = anim.name || 'ready';
   const ph = clamp(anim.phase || 0, 0, 1);
   const time = ctx.time || 0;
@@ -443,8 +477,8 @@ function frame(yaw, lean, side) {
 }
 
 // Returns the solved rig in character space (global yaw applied, mirrored for left-handers).
-export function solve(P, hand = 'R') {
-  const B = BODY;
+export function solve(P, hand = 'R', arch = 'classic') {
+  const B = bodyFor(BODY, ARCHETYPES[arch] || ARCHETYPES.classic);
   const H = P.hip;
   const pel = frame(P.py, P.lean * 0.35, P.side * 0.5);
   const chs = frame(P.cy, P.lean, P.side);
@@ -531,4 +565,38 @@ export function solve(P, hand = 'R') {
   out.mir = mir;
   out.stretch = { legR: legR.stretch, legL: legL.stretch, armR: armR.stretch, armL: armL.stretch };
   return out;
+}
+
+// Solve a stroke pose so that the string-bed centre meets anim.contact around phase 0.5. The racket axis turns toward
+// the ball only as much as needed for the hand to stay within reach; if even that is not enough the body (hips) moves
+// toward the ball. A few fixed-point iterations with the full rig (cheap compared with rendering).
+export function solveStroke(P, anim, hand = 'R', arch = 'classic') {
+  let J = solve(P, hand, arch);
+  const C = anim && anim.name === 'swing' ? contactTarget(anim) : null;
+  if (!C) return J;
+  const w = contactWeight(clamp(anim.phase || 0, 0, 1));
+  if (w < 0.05) return J;
+  const mir = hand === 'L' ? -1 : 1;
+  const B = bodyFor(BODY, ARCHETYPES[arch] || ARCHETYPES.classic);
+  const reach = (B.upperArm + B.foreArm) * 0.95 + B.gripT * 0.9;
+  const ax0 = norm(P.ax), hD0 = P.hD.slice(), hip0 = P.hip.slice();
+  let hipOff = [0, 0, 0];
+  for (let it = 0; it < 3; it++) {
+    const sh = [J.shR[0] * mir, J.shR[1], J.shR[2]];
+    const toC = norm(sub(C, sh));
+    let ax = null, hnd = null;
+    for (const a of [0, 0.25, 0.5, 0.75, 1]) {
+      const t = norm(lerpV(ax0, toC, a)), h = sub(C, mul(t, RACKET_HEAD));
+      if (len(sub(h, sh)) <= reach) { ax = t; hnd = h; break; }
+    }
+    let excess = null;
+    if (!ax) { ax = toC; hnd = add(sh, mul(toC, reach)); excess = sub(C, add(hnd, mul(ax, RACKET_HEAD))); }
+    P.hD = lerpV(hD0, hnd, w); P.ax = norm(lerpV(ax0, ax, w));
+    if (!excess || len(excess) < 0.01) { J = solve(P, hand, arch); break; }
+    hipOff = add(hipOff, [excess[0], clamp(excess[1], -0.12, 0.06), excess[2]]);
+    hipOff = [clamp(hipOff[0], -0.45, 0.45), clamp(hipOff[1], -0.25, 0.08), clamp(hipOff[2], -0.3, 0.4)];
+    P.hip = add(hip0, mul(hipOff, w));
+    J = solve(P, hand, arch);
+  }
+  return J;
 }

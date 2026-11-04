@@ -13,9 +13,31 @@ const FORMATS = [
 ];
 const CONTROLS = [{ id: 'keyboard', name: '键盘' }, { id: 'phone', name: '手机体感' }];
 const HANDS = [{ id: 'R', name: '右手' }, { id: 'L', name: '左手' }];
-const AUTOS = [{ id: 'off', name: '关' }, { id: 'assist', name: '辅助' }, { id: 'full', name: '全自动' }];
+const AUTOS = [{ id: 'off', name: '关' }, { id: 'assist', name: '辅助（推荐，需要自己控制大范围移动）' }, { id: 'full', name: '全自动（简单模式）' }];
+const SPEEDS = [{ id: '0.7', name: '0.7' }, { id: '0.8', name: '0.8' }, { id: '0.85', name: '0.85（默认）' }, { id: '0.9', name: '0.9' }, { id: '1.0', name: '1.0' }];
+const ARCHETYPES = [
+  { id: 'elastic', name: '灵动防守型', desc: '瘦削柔韧，低重心滑步，双反稳定。' },
+  { id: 'lanky', name: '高个进攻型', desc: '修长挺拔，早引拍，平击压迫。' },
+  { id: 'classic', name: '经典', desc: '均衡的标准体型。' },
+];
+// Generic default kits per archetype (colours only; [main kit, alternate kit when both players pick the same build])
+const KITS = {
+  elastic: [{ skin: '#e0a97c', hair: '#2a1d12', shirt: '#1f8f8a', shorts: '#1d2433', shoes: '#f2f2f2', headband: null },
+    { skin: '#c98a5b', hair: '#111111', shirt: '#e86a3a', shorts: '#22283a', shoes: '#f2f2f2', headband: null }],
+  lanky: [{ skin: '#f1c9a5', hair: '#5a3a22', shirt: '#f2f2ee', shorts: '#2a3350', shoes: '#f2f2f2', headband: '#2a3350' },
+    { skin: '#e0a97c', hair: '#3b2415', shirt: '#2c4f9e', shorts: '#f2f2ee', shoes: '#f2f2f2', headband: '#f2f2ee' }],
+  classic: [{ skin: '#c98a5b', hair: '#2a1d12', shirt: '#d64545', shorts: '#26376b', shoes: '#f2f2f2', headband: null },
+    { skin: '#f1c9a5', hair: '#6b4423', shirt: '#f2c230', shorts: '#1c2a46', shoes: '#f2f2f2', headband: '#ffffff' }],
+};
+export function looksFor(arch0, arch1) {
+  const a0 = KITS[arch0] ? arch0 : 'classic', a1 = KITS[arch1] ? arch1 : 'classic';
+  const l0 = { ...KITS[a0][0], archetype: a0 };
+  const l1 = { ...KITS[a1][a0 === a1 ? 1 : 0], archetype: a1 };
+  if (l1.shirt === l0.shirt) Object.assign(l1, { shirt: KITS[a1][1].shirt, shorts: KITS[a1][1].shorts });
+  return [l0, l1];
+}
 const LEVEL_NAMES = ['新手', '新手', '业余', '业余', '进阶', '进阶', '高手', '高手', '职业', '大师'];
-const DEFAULTS = { style: 'grinder', level: 5, surface: 'hard', format: 'set', control: 'keyboard', hand: 'R', auto: 'assist', offset: 0, sound: true, speech: false };
+const DEFAULTS = { style: 'grinder', level: 5, surface: 'hard', format: 'set', control: 'keyboard', hand: 'R', auto: 'assist', offset: 0, sound: true, speech: false, speed: '0.85', arch0: 'classic', arch1: 'classic' };
 const KEY = 'realtennis.settings.v1';
 
 const $ = (id) => document.getElementById(id);
@@ -68,6 +90,17 @@ export function createMenu({ phone, getKeyboardHelp, onStart }) {
   seg('opt-control', CONTROLS, 'control');
   seg('opt-hand', HANDS, 'hand');
   seg('opt-auto', AUTOS, 'auto');
+  seg('opt-speed', SPEEDS, 'speed');
+  const archCards = (id, key) => {
+    const box = $(id); box.innerHTML = '';
+    for (const a of ARCHETYPES) {
+      const b = el('button', 'card' + (s[key] === a.id ? ' on' : ''), `<b>${a.name}</b><i>${a.desc}</i>`);
+      b.type = 'button'; b.dataset.id = a.id;
+      b.onclick = () => { s[key] = a.id; [...box.children].forEach((c) => c.classList.toggle('on', c.dataset.id === a.id)); saveSettings(s); };
+      box.appendChild(b);
+    }
+  };
+  archCards('opt-arch0', 'arch0'); archCards('opt-arch1', 'arch1');
 
   const lv = $('opt-level'); lv.value = s.level;
   const updLv = () => { s.level = +lv.value; $('lv-val').textContent = lv.value; $('lv-label').textContent = LEVEL_NAMES[s.level - 1]; saveSettings(s); };
@@ -116,6 +149,7 @@ export function createMenu({ phone, getKeyboardHelp, onStart }) {
       surface: s.surface, aiStyle: s.style, aiLevel: Math.round((0.1 + (s.level - 1) / 9 * 0.9) * 100) / 100,
       format: { ...fmt.format }, humanHand: s.hand, autoMove: [s.auto, 'off'], playerNames: ['你', 'AI'],
       control: s.control, timingOffsetMs: s.offset, sound: s.sound, speech: s.speech,
+      timeScale: parseFloat(s.speed) || 0.85, looks: looksFor(s.arch0, s.arch1),
     };
     onStart(cfg);
   };

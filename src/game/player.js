@@ -77,7 +77,8 @@ export class Player {
     this.routine = null;                         // pre-serve ball-bounce routine, managed by Simulation
     this.moveScale = 1;
     this.anim = { name: 'ready', shot: null, side: null, phase: 0, dir: { x: 0, z: -this.facing }, speed: 0,
-      gait: 0, strideLen: 0.9, face: { x: 0, z: -this.facing }, accel: 0 };
+      gait: 0, strideLen: 0.9, face: { x: 0, z: -this.facing }, accel: 0, contact: null, variant: 'normal', reachT: 0 };
+    this.contactInfo = null;                     // {contact:{lat,fwd,h}, variant, reachT}: planned or actual contact (§7.1)
     // locomotion: a target (move order) or a velocity intent drives the feet
     this.target = null;                          // {x,z} move order (AI / auto-move), hysteresis handled here
     this.loco = { state: 'set', mode: 'shuffle', modeT: 0, accAlong: 0 };
@@ -104,8 +105,9 @@ export class Player {
   }
 
   /** Start a swing (called when the contact happens or a whiff). */
-  startSwing(shot, side) {
+  startSwing(shot, side, contactInfo = null) {
     this.swingT = 0; this.swingShot = shot; this.swingSide = side;
+    if (contactInfo) this.contactInfo = contactInfo;
     this.prepared = null;
     this.cooldown = 0.32;
     this.stamina = Math.max(0, this.stamina - 0.004);
@@ -298,16 +300,21 @@ export class Player {
       a.name = 'bounce'; a.phase = this.routine.mode === 'dribble' ? this.routine.u : 0; a.shot = null; a.side = null;
       return;
     }
+    const ci = this.contactInfo;
+    if (this.swingT >= 0 || this.prepared) {
+      a.contact = ci ? ci.contact : null; a.variant = ci ? ci.variant : 'normal'; a.reachT = ci ? ci.reachT : 0;
+    } else { a.contact = null; a.variant = 'normal'; a.reachT = 0; }
     if (this.swingT >= 0) {
       a.name = 'swing'; a.shot = this.swingShot; a.side = this.swingSide;
       a.phase = Math.min(1, 0.5 + 0.5 * this.swingT / PLAYER.swingDur);
       return;
     }
     if (this.prepared) {
-      a.name = 'swing'; a.shot = this.prepared.shot; a.side = this.prepared.side || null;
+      a.name = 'swing'; a.shot = this.prepared.shot; a.side = this.prepared.side || (ci && ci.side) || null;
       a.phase = Math.min(0.45, 0.05 + this.prepared.t * 1.6);
       return;
     }
+    this.contactInfo = null;
     a.shot = null; a.side = null; a.phase = 0;
     if (this.celebrateT > 0) { a.name = 'celebrate'; return; }
     if (this.dejectedT > 0) { a.name = 'dejected'; return; }
