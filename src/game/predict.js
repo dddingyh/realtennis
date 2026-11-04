@@ -17,11 +17,21 @@ export function predictPath(ball, surface, opts = {}) {
   return { path: r.path, result: r };
 }
 
-/** Time (s) for a player starting at rest to travel `d` metres. */
-export function travelTime(d, vmax, a) {
-  const dAcc = vmax * vmax / (2 * a);
-  if (d <= dAcc) return Math.sqrt(2 * Math.max(0, d) / a);
-  return vmax / a + (d - dAcc) / vmax;
+/**
+ * Time (s) for a player starting at rest to travel `d` metres and stop there, with the locomotion model of player.js:
+ * drive a(v) = a0 (1 - v/vmax) (v(t) = vmax (1 - e^{-t/tau}), tau = vmax/a0) and planned braking steps at the end.
+ * Short lateral moves are side shuffles (lower top speed).
+ */
+export function travelTime(d, vmax, a0 = 20, brake = 7) {
+  if (d <= 0.3) return d / 2.5;                         // inside the hysteresis band: a quick adjustment step
+  const vm = d <= 2.5 ? Math.min(vmax, 3.6) : vmax;
+  const tau = vm / a0;
+  // distance covered while accelerating for t, plus the braking distance from the reached speed
+  const dist = (t) => { const v = vm * (1 - Math.exp(-t / tau)); return vm * (t - tau * (1 - Math.exp(-t / tau))) + v * v / (2 * brake); };
+  let lo = 0, hi = 0.2 + d / vm * 2 + 1;
+  for (let i = 0; i < 24; i++) { const m = 0.5 * (lo + hi); if (dist(m) < d) lo = m; else hi = m; }
+  const v = vm * (1 - Math.exp(-hi / tau));
+  return hi + v / brake;
 }
 
 /**
@@ -33,7 +43,7 @@ export function travelTime(d, vmax, a) {
  * @returns {null|{t:number, ball:{x,y,z}, stand:{x,z}, side:'fh'|'bh', bounces:number, feasible:boolean, tNeed:number}}
  */
 export function planInterception(path, me, prefs = {}) {
-  const vmax = prefs.vmax ?? 6, acc = prefs.accel ?? 9;
+  const vmax = prefs.vmax ?? 6, acc = prefs.accel ?? 20;
   const react = prefs.reactDelay ?? 0;
   const yMin = prefs.yMin ?? 0.4, yMax = prefs.yMax ?? 1.8;
   const prefY = prefs.prefY ?? 0.95, prefDepth = prefs.prefDepth ?? 0.5;

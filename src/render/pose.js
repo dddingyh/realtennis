@@ -8,6 +8,7 @@
 //   solve(P, hand)     -> J   (joint positions, frames and racket pose; consumed by char_model.js)
 import { SERVE_T, TOSS, serveTime, tossHand, contactPoint, rootOffset, dribble, PALM_BELOW_BALL } from '../game/serve_choreo.js';
 const TAU = Math.PI * 2;
+import { locoPose } from './char_loco.js';
 export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -78,6 +79,15 @@ function sample(tr, t) {
   return unpack(out);
 }
 const K = (t, o) => [t, o];
+// cross-fade two poses (w = weight of b); used for locomotion / stance / swing transitions
+export function mixPose(a, b, w) {
+  const A = pack(a), B = pack(b), o = new Float64Array(N);
+  for (let k = 0; k < N; k++) o[k] = A[k] + (B[k] - A[k]) * w;
+  const p = unpack(o);
+  let dy = (b.yaw || 0) - (a.yaw || 0); dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+  p.yaw = (a.yaw || 0) + dy * w;
+  return p;
+}
 
 // ------------------------------------------------------------------ stance building blocks
 // Feet in the neutral/semi-open forehand stance (right-hander): left foot forward-ish, right foot back & turned.
@@ -366,23 +376,8 @@ export function poseFor(anim, ctx = {}) {
       };
       return mk(o);
     }
-    case 'run': {
-      const dx = anim.dir ? anim.dir.x : 0, dz = anim.dir ? anim.dir.z : 0;
-      const near = ctx.role === 'near';
-      let cx = near ? dx : -dx, cz = near ? -dz : dz;
-      const l = Math.hypot(cx, cz) || 1; cx /= l; cz /= l;
-      const sp = clamp(anim.speed == null ? 0.7 : anim.speed, 0.15, 1);
-      // sprint facing the direction of travel when going forward-ish; turn the body for lateral/backward travel
-      const ang = Math.atan2(cx, cz);
-      let yaw;
-      if (cz >= 0.3) yaw = clamp(ang, -0.9, 0.9);
-      else yaw = (cx >= 0 ? 1 : -1) * (cz < -0.6 ? 0.85 : 1.05);
-      const rel = V(Math.sin(ang - yaw), 0, Math.cos(ang - yaw));
-      const p = gait(ctx.runPhase || 0, { x: rel[0], z: rel[2] }, sp, false);
-      p.yaw = yaw;
-      return p;
-    }
-    case 'walk': return gait(ctx.runPhase || 0, { x: 0, z: 1 }, 0.4, true);
+    case 'run': case 'walk': case 'shuffle': case 'crossover': case 'backpedal': case 'brake':
+      return locoPose(anim, ctx, mk, V); // footwork with planted feet (char_loco.js)
     case 'celebrate': {
       const t = (time * 1.8) % 1, g = Math.sin(t * TAU);
       const pump = smooth(clamp(Math.sin(t * TAU * 2) * 0.5 + 0.5, 0, 1));

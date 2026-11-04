@@ -7,7 +7,9 @@ import { STAGE, THEMES } from './stage.js';
 const W = camera.W, H = camera.H;
 const POST_X = COURT.doublesHalfWidth + 0.914; // 6.399
 const NET_TOP_C = COURT.netHeightCenter, NET_TOP_P = COURT.netHeightPost;
-const NET_ROW = camera.project(0, 0.5, 0).sy;   // screen row through the net plane (mid height)
+const NET_ROW = camera.project(0, 0.5, 0).sy;
+const UMP_X = 7.15;            // umpire chair right beside the umpire-side (right) net post
+const CHAIR_X = 9.3, CHAIR_Z = 3.0; // players' chairs either side of the umpire chair, facing the court   // screen row through the net plane (mid height)
 
 export function netTopAt(x) {
   const ax = Math.abs(x);
@@ -78,13 +80,16 @@ export function renderNetLayer(surface = 'hard') {
     // foot shadow on court
   }
   drawUmpireChair(pb, TH);
+  // near-side (z > 0) courtside items live in the net layer so they draw in front of the net/umpire chair
+  playerChair(pb, CHAIR_X, CHAIR_Z, TH);
+  person(pb, -6.0, 0.45, { ...ballKid(TH), skin: '#f1c9a5', hair: '#c8a24a', crouch: true });
   return pb;
 }
 
 function darken(pb, x, y, f) { const c = pb.get(x, y); if (c) pb.set(x, y, shade(c, f)); }
 
 function drawUmpireChair(pb, TH) {
-  const cx = 7.75;
+  const cx = UMP_X;
   const k = P(cx, 0, 0).scale;
   const m = (v) => Math.round(v * k);
   const base = P(cx, 0, 0);
@@ -158,6 +163,7 @@ function person(pb, wx, wz, opts) {
     if (hat) pb.rect(x - (hs >> 1) - 1, sy0 - m(0.55) - hs, hs + 2, 1, hex(hat));
     if (k >= 26) personDetail(pb, x, sy0 - m(0.55), hs, m, sh, sk, hat, y, true);
   } else {
+    if (k >= 24) { ballKidFigure(pb, x, y, k, sh, tr, sk, hr, crouch); return; }
     const kneel = crouch ? 0.45 : 0;
     const top = y - m(1.0 - kneel);
     pb.rect(x - m(0.14), top + m(0.5), m(0.12), m(0.5 - kneel * 0.2) , sk);
@@ -172,6 +178,68 @@ function person(pb, wx, wz, opts) {
     if (hat) pb.rect(x - (hs >> 1) - 1, top - hs, hs + 2, 1, hex(hat));
     if (k >= 26) personDetail(pb, x, top, hs, m, sh, sk, hat, y, false);
   }
+}
+
+// Ball kid at decent size: rounded head with hair, short-sleeved shirt with shading, shorts, white socks, dark shoes.
+// Standing: upright, arms behind the back (elbows just visible). Crouching: knees bent, hands on knees, leaning in.
+function ballKidFigure(pb, x, y, k, sh, tr, sk, hr, crouch) {
+  const m = (v) => Math.max(1, Math.round(v * k));
+  const shD = shade(sh, 0.72), shL = shade(sh, 1.18), skD = shade(sk, 0.8), trD = shade(tr, 0.7);
+  const shoe = hex('#23262e'), sock = hex('#f2f2ea');
+  const legH = crouch ? m(0.32) : m(0.66), torsoH = m(0.44), hs = Math.max(4, m(0.2));
+  const hipY = y - legH, shY = hipY - torsoH + (crouch ? m(0.06) : 0);
+  const lean = crouch ? m(0.1) : 0;            // crouch: upper body shifts forward (screen left/right is neutral)
+  // legs
+  const lw = Math.max(2, m(0.1)), gap = Math.max(1, m(0.04));
+  for (const sx of [-1, 1]) {
+    const lx = sx < 0 ? x - gap - lw : x + gap;
+    if (crouch) {
+      // thigh (foreshortened, pointing at camera) + shin
+      pb.rect(lx - (sx < 0 ? m(0.05) : 0), hipY, lw + m(0.05), m(0.12), tr);
+      pb.rect(lx, hipY + m(0.12), lw, legH - m(0.12) - 2, sk);
+      pb.rect(lx + lw - 1, hipY + m(0.12), 1, legH - m(0.12) - 2, skD);
+    } else {
+      pb.rect(lx, hipY, lw, legH - 2, sk);
+      pb.rect(lx + lw - 1, hipY, 1, legH - 2, skD);
+      pb.rect(lx, y - Math.max(3, m(0.12)), lw, Math.max(2, m(0.08)), sock);
+    }
+    pb.rect(lx - (sx < 0 ? 1 : 0), y - 2, lw + 1, 2, shoe);
+  }
+  // shorts
+  const sw = m(0.34);
+  pb.rect(x - (sw >> 1), hipY - m(0.06), sw, m(crouch ? 0.14 : 0.2), tr);
+  pb.rect(x - (sw >> 1) + sw - 1, hipY - m(0.06), 1, m(crouch ? 0.14 : 0.2), trD);
+  if (!crouch) pb.rect(x, hipY + m(0.05), 1, m(0.09), trD);
+  // torso with rounded shoulders
+  const tw = m(0.38), tx = x - (tw >> 1) - lean;
+  pb.rect(tx + 1, shY, tw - 2, 1, sh);
+  pb.rect(tx, shY + 1, tw, torsoH - 1, sh);
+  pb.rect(tx + 1, shY + 1, Math.max(1, tw >> 3), torsoH - 3, shL);
+  pb.rect(tx + tw - 2, shY + 1, 2, torsoH - 1, shD);
+  pb.rect(tx, shY + torsoH - 2, tw, 2, shD);                       // tucked hem shadow
+  pb.rect(x - 1 - lean, shY, 3, 1, shade(sh, 0.55));              // collar
+  // arms
+  const aw = Math.max(2, m(0.07));
+  if (crouch) {
+    for (const sx of [-1, 1]) {
+      const ax = sx < 0 ? tx - aw + 1 : tx + tw - 1;
+      pb.rect(ax, shY + 1, aw, m(0.12), sh);                          // sleeve
+      pb.rect(ax + (sx < 0 ? 1 : -1) * 0, shY + 1 + m(0.12), aw, m(0.2), sk); // forearm down to the knee
+      pb.rect(ax, shY + 1 + m(0.32), aw + 1, Math.max(2, m(0.06)), sk);    // hand on knee
+    }
+  } else {
+    // arms behind the back: only sleeves and a sliver of upper arm
+    pb.rect(tx - 1, shY + 1, aw, m(0.13), sh); pb.rect(tx + tw - aw + 1, shY + 1, aw, m(0.13), shD);
+    pb.rect(tx - 1, shY + 1 + m(0.13), aw - 1, m(0.14), skD); pb.rect(tx + tw - aw + 2, shY + 1 + m(0.13), aw - 1, m(0.14), skD);
+  }
+  // head
+  const hx = x - (hs >> 1) - lean, hy = shY - hs - 1;
+  pb.rect(x - 1 - lean, shY - 1, 2, 2, skD);                      // neck
+  pb.rect(hx + 1, hy, hs - 2, hs, sk); pb.rect(hx, hy + 1, hs, hs - 2, sk);
+  pb.rect(hx + hs - 1, hy + 1, 1, hs - 2, skD);
+  pb.rect(hx + 1, hy - 1, hs - 2, Math.max(2, hs >> 2) + 1, hr);   // hair
+  pb.rect(hx, hy, 1, Math.max(2, hs >> 1), hr); pb.rect(hx + hs - 1, hy, 1, Math.max(1, hs >> 2) + 1, hr);
+  if (hs >= 6) { pb.set(hx + (hs >> 1) - 2, hy + (hs >> 1), hex('#1c1c24')); pb.set(hx + (hs >> 1) + 1, hy + (hs >> 1), hex('#1c1c24')); }
 }
 
 // extra pixels when the figure is large enough (540p+): collar, sleeves, belt, shoes, face shading, cap brim
@@ -197,51 +265,89 @@ function box(pb, x, y, z, w, h, d, c) {
   pb.rect(x1 - 1, yt, 1, yb - yt, shade(c, 0.7));
   pb.rect(x0, yb - 1, x1 - x0, 1, shade(c, 0.6));
 }
-function bench(pb, x, z, TH) {
-  const wall = hex(TH.wall);
-  const q = P(x, 0, z), k = q.scale, m = (v) => Math.max(1, Math.round(v * k));
-  pb.ellipse(Math.round(q.sx + m(0.4)), Math.round(q.sy), m(1.0), Math.max(1, m(0.1)), rgba(0, 0, 0, 70), true);
-  const bx = Math.round(q.sx - m(0.8)), by = Math.round(q.sy);
-  pb.rect(bx, by - m(0.45), m(1.6), m(0.1), hex('#d8dce4'));            // seat
-  pb.rect(bx + 1, by - m(0.35), 2, m(0.35), hex('#2a2f3a')); pb.rect(bx + m(1.6) - 3, by - m(0.35), 2, m(0.35), hex('#2a2f3a'));
-  pb.rect(bx, by - m(0.95), m(1.6), m(0.5), wall);                       // back
-  pb.rect(bx, by - m(0.95), m(1.6), 1, hex(TH.wallLite));
-  // towel box
-  const tb = bx + m(1.75);
-  pb.rect(tb, by - m(0.5), m(0.45), m(0.5), shade(wall, 0.8)); pb.rect(tb, by - m(0.5), m(0.45), 1, hex(TH.wallLite));
-  pb.rect(tb + 1, by - m(0.62), m(0.45) - 2, m(0.12), hex('#f2f2ea'));
-  if (k >= 30) {
-    // folded towel draped over the bench back + two water bottles + racket bag under the seat
-    pb.rect(bx + m(0.2), by - m(0.95), m(0.28), m(0.42), hex('#f2f2ea'));
-    pb.rect(bx + m(0.2), by - m(0.95), 1, m(0.42), hex('#c9ccd2'));
-    pb.rect(bx + m(0.2) + m(0.28) - 1, by - m(0.95), 1, m(0.42), hex('#d9dce2'));
-    for (const ox of [0.95, 1.12]) {
-      const xx = bx + m(ox);
-      pb.rect(xx, by - m(0.45) - m(0.24), Math.max(2, m(0.07)), m(0.24), hex('#cfe6f5'));
-      pb.rect(xx, by - m(0.45) - m(0.24), Math.max(2, m(0.07)), 1, hex(TH.wallLite));
-    }
-    pb.rect(bx + m(0.15), by - m(0.28), m(0.9), m(0.22), hex('#1b1e26'));
-    pb.rect(bx + m(0.15), by - m(0.28), m(0.9), 1, hex('#3a404e'));
-    pb.rect(bx + m(0.5), by - m(0.24), m(0.25), 1, hex(TH.accent));
+const ballKid = (TH) => ({ shirt: TH.wallLite, shorts: '#1c2236', skin: '#e0a97c', hair: '#3b2415' });
+
+// Courtside player chair seen side-on, facing the court (screen left), with drinks cooler, towel box and racket bag.
+function playerChair(pb, x, z, TH) {
+  const wall = hex(TH.wall), lite = hex(TH.wallLite), white = hex('#f2f2ea');
+  const at = (dx, dz) => { const q = P(x + dx, 0, z + dz); return { x: Math.round(q.sx), y: Math.round(q.sy), k: q.scale }; };
+  const k = at(0, 0).k, m = (v) => Math.max(1, Math.round(v * k));
+  // shadow under the whole group
+  const g = at(0.1, 0);
+  pb.ellipse(g.x + m(0.15), g.y, m(0.9), Math.max(2, m(0.16)), rgba(0, 0, 0, 70), true);
+  // drinks cooler / small table (wall side of the chair)
+  {
+    const c = at(0.85, -0.15), w = m(0.46), h = m(0.6);
+    pb.rect(c.x - (w >> 1), c.y - h, w, h, hex('#e9ecf1'));
+    pb.rect(c.x - (w >> 1), c.y - h, w, m(0.08), lite);
+    pb.rect(c.x - (w >> 1) + w - 1, c.y - h, 1, h, hex('#b9bec8'));
+    pb.rect(c.x - (w >> 1), c.y - 2, w, 2, hex('#9aa0ab'));
+    pb.rect(c.x - (w >> 1) + 2, c.y - Math.round(h * 0.55), w - 4, 1, hex('#c9ced6'));
+    // bottles
+    const bw = Math.max(2, m(0.07)), bh = m(0.24);
+    [[-0.12, '#cfe6f5'], [0.0, '#f2c230'], [0.12, '#cfe6f5']].forEach(([ox, col]) => {
+      const bx = c.x + m(ox) - (bw >> 1);
+      pb.rect(bx, c.y - h - bh, bw, bh, hex(col)); pb.rect(bx, c.y - h - bh, bw, 1, shade(hex(col), 0.6));
+      pb.rect(bx + bw - 1, c.y - h - bh + 1, 1, bh - 1, shade(hex(col), 0.8));
+    });
+  }
+  // chair
+  {
+    const c = at(0, 0);
+    const seatH = m(0.48), legC = hex('#2a2f3a');
+    const fx = c.x - m(0.28), bx = c.x + m(0.22);
+    pb.rect(fx, c.y - seatH, 2, seatH, legC); pb.rect(bx, c.y - seatH, 2, seatH, legC);
+    pb.rect(fx + 1, c.y - Math.round(seatH * 0.35), bx - fx, 1, shade(legC, 1.3));          // stretcher
+    // padded seat cushion
+    const sw = m(0.6), sh = Math.max(3, m(0.11));
+    pb.rect(fx - 2, c.y - seatH - sh, sw + 2, sh, wall);
+    pb.rect(fx - 1, c.y - seatH - sh, sw, 1, lite);
+    pb.rect(fx - 2, c.y - seatH - sh + 1, 1, sh - 2, shade(lite, 0.9));
+    pb.rect(fx - 2, c.y - seatH - 1, sw + 2, 1, shade(wall, 0.6));
+    // padded backrest (away from the court)
+    const bh = m(0.72), bwid = Math.max(4, m(0.14)), bTop = c.y - seatH - sh - bh;
+    pb.rect(bx - 1, bTop, bwid, bh + 1, wall);
+    pb.rect(bx - 1, bTop, 1, bh, lite);
+    pb.rect(bx - 1 + bwid - 1, bTop, 1, bh, shade(wall, 0.65));
+    pb.rect(bx - 1, bTop, bwid, 1, lite);
+    // white piping + towel over the backrest
+    pb.rect(bx - 2, bTop + 1, Math.max(2, m(0.1)), Math.round(bh * 0.45), white);
+    pb.rect(bx - 2, bTop + 1, 1, Math.round(bh * 0.45), hex('#c9ccd2'));
+  }
+  // racket bag lying on the court side of the chair
+  {
+    const c = at(-0.75, 0.25), w = m(0.85), h = Math.max(3, m(0.2));
+    pb.rect(c.x - (w >> 1), c.y - h, w, h, hex('#1b1e26'));
+    pb.rect(c.x - (w >> 1) + 1, c.y - h, w - 2, 1, hex('#3a404e'));
+    pb.rect(c.x - (w >> 1) + Math.round(w * 0.2), c.y - h + Math.round(h / 2), Math.round(w * 0.6), 1, hex(TH.accent));
+    pb.rect(c.x - 2, c.y - h - 1, 4, 1, white);
+  }
+  // towel box (in front of the chair)
+  {
+    const c = at(-0.1, 0.8), w = m(0.36), h = m(0.42);
+    pb.rect(c.x - (w >> 1), c.y - h, w, h, shade(wall, 0.85));
+    pb.rect(c.x - (w >> 1), c.y - h, w, 1, lite);
+    pb.rect(c.x - (w >> 1) + w - 1, c.y - h, 1, h, shade(wall, 0.6));
+    pb.rect(c.x - (w >> 1) + 1, c.y - h - Math.max(2, m(0.07)), w - 2, Math.max(2, m(0.07)), white);
+    pb.rect(c.x - (w >> 1) + 1, c.y - h - Math.max(2, m(0.07)), w - 2, 1, hex('#ffffff'));
   }
 }
+
+// Background-layer people/props (everything behind the net plane or never overlapping it).
+// No line judges: electronic line calling.
 export function drawStaticPeople(pb, surface = 'hard') {
   const TH = THEMES[surface] || THEMES.hard;
-  const J = { shirt: '#f2f2ea', shorts: '#1b2438', skin: '#e0a97c', hair: '#2a1d12', seated: true, hat: '#f2f2ea' };
+  const K = ballKid(TH);
   const { ZB } = STAGE;
-  person(pb, 0.0, -ZB + 1.0, { ...J, skin: '#f1c9a5' });
-  person(pb, -7.3, -ZB + 1.0, { ...J, skin: '#c98a5b', hair: '#111' });
-  person(pb, 7.3, -ZB + 1.0, { ...J, skin: '#e0a97c' });
-  person(pb, -7.2, -4.2, { ...J, skin: '#9a6038', hair: '#111' });
-  person(pb, 7.2, -4.0, { ...J, skin: '#f1c9a5', hair: '#6b4423' });
-  person(pb, -10.3, 7.0, { ...J, skin: '#e0a97c' });
-  person(pb, 10.3, 7.0, { ...J, skin: '#f7dcc2', hair: '#a33a1e' });
-  const K = { shirt: TH.wallLite, shorts: '#1c2236', skin: '#e0a97c', hair: '#3b2415', crouch: true };
-  person(pb, -7.0, -17.2, { ...K });
-  person(pb, 7.0, -17.2, { ...K, skin: '#c98a5b' });
-  person(pb, -6.6, -0.8, { ...K, skin: '#f1c9a5', hair: '#c8a24a' });
-  person(pb, 6.6, -1.2, { ...K, skin: '#9a6038', hair: '#111' });
-  // benches with towel boxes on the umpire-opposite side, net-cord sensor
-  bench(pb, -8.6, 3.2, TH); bench(pb, -8.6, 7.4, TH);
-  box(pb, 6.25, 0, 0.35, 0.22, 0.18, 0.2, hex('#2a303c'));
+  // far-side player chair (other side of the umpire chair)
+  playerChair(pb, CHAIR_X, -CHAIR_Z, TH);
+  // net-cord sensor box clipped to the umpire-side post
+  box(pb, 6.5, 0, -0.05, 0.24, 0.2, 0.2, hex('#2a303c'));
+  // net ball kid on the far side of the net at the umpire-side post (seen through the mesh)
+  person(pb, 6.0, -0.45, { ...K, skin: '#9a6038', hair: '#111', crouch: true });
+  // back-corner ball kids: two behind each baseline, near the back wall, outside the doubles sidelines
+  person(pb, -7.4, -ZB + 0.9, { ...K });
+  person(pb, 7.4, -ZB + 0.9, { ...K, skin: '#c98a5b' });
+  person(pb, -7.9, 16.2, { ...K, skin: '#f1c9a5', hair: '#6b4423' });
+  person(pb, 7.9, 16.2, { ...K, skin: '#e0a97c', hair: '#c8a24a' });
 }

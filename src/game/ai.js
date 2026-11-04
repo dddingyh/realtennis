@@ -91,15 +91,10 @@ export class AIController {
     }
   }
 
-  _stop() { this.me.intent.x = 0; this.me.intent.z = 0; }
+  _stop() { this.me.hold(); }
 
-  _moveTo(x, z, speedFrac = 1) {
-    const me = this.me;
-    const dx = x - me.pos.x, dz = z - me.pos.z, d = Math.hypot(dx, dz);
-    if (d < 0.07) { this._stop(); return; }
-    const k = clamp(d / 0.5, 0, 1) * speedFrac;
-    me.intent.x = dx / d * k; me.intent.z = dz / d * k;
-  }
+  /** Move order (player.js handles footwork, braking steps and start/stop hysteresis). */
+  _moveTo(x, z, timeLeft = null) { this.me.moveTo(x, z, timeLeft); }
 
   // ------------------------------------------------------------ serving
   _servePrep() {
@@ -163,13 +158,13 @@ export class AIController {
       this.plan = null; this.planKey = -1;
       this.swingMs = sim.rngAI.gauss(0, 8 + 58 * (1 - this.level));
     }
-    if (sim.time < this.reactAt) { this._recoverMove(this.netMode ? 1 : 0.6); return; }
+    if (sim.time < this.reactAt) { if (this.netMode) this._recoverMove(1); else this._stop(); return; }   // split step, read the ball
     const key = sim.hitCount * 4 + b.bounces;
     if (this.planKey !== key) this._replan(key);
     const p = this.plan;
     if (!p) { this._stop(); return; }
     if (Math.abs(p.stand.z) > 10.2) this.netMode = false;
-    this._moveTo(p.stand.x, p.stand.z, 1);
+    this._moveTo(p.stand.x, p.stand.z, p.t - (sim.time - this.planTime));
     this._maybeSwing(p);
   }
 
@@ -184,13 +179,14 @@ export class AIController {
     const wantVolley = b.bounces === 0 && !out && (this.netMode || (S.volleyOK && netD < 7.0) || netD < 5.0);
     const sd = (1 - L) * 0.8 * (b.bounces >= 1 ? 0.45 : 1);
     const prefs = {
-      vmax: PLAYER.maxSpeed * me.speedMul * (0.55 + 0.45 * (me.stamina ?? 1) * 0 + 0.45), accel: PLAYER.accel, reactDelay: Math.max(0, this.reactAt - sim.time),
+      vmax: PLAYER.maxSpeed * me.speedMul, accel: PLAYER.accel0, reactDelay: Math.max(0, this.reactAt - sim.time),
       allowVolley: wantVolley, yMin: 0.35, yMax: 1.7, prefY: S.prefY, prefDepth: S.prefDepth, timeBias: S.timeBias,
       volleyYMin: 0.45, volleyYMax: 2.6, volleyZ: S.netZ + 0.6, volleyBias: this.netMode ? -0.8 : -0.1, volleyTol: this.netMode ? 0.35 : 0.1, noiseX: sd, noiseZ: sd * 0.7, rng: sim.rngAI,
     };
     prefs.vmax = PLAYER.maxSpeed * me.speedMul * 0.97;
     const c = planInterception(path, me, prefs);
     this.plan = c;
+    this.planTime = sim.time;
   }
 
   _maybeSwing(p) {
@@ -300,6 +296,6 @@ export class AIController {
     let x = ox + D * Math.tan(0.5 * (aL + aR));
     x = clamp(x, -2.2, 2.2);
     const z = this.netMode ? me.facing * S.netZ : me.facing * (COURT.halfLength + S.base);
-    this._moveTo(x, z, frac);
+    this._moveTo(x, z);
   }
 }

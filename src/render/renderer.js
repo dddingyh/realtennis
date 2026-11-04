@@ -137,7 +137,11 @@ export class Renderer {
     // the pre-serve ball bounce is rendered through the serve sprite path (pose.js: serve + shot 'bounce')
     if (pl.anim && pl.anim.name === 'bounce') pl = { ...pl, anim: { ...pl.anim, name: 'serve', shot: 'bounce' } };
     const f = this.sprites.get(i, pl, role, s, time);
-    const x = Math.round(p.sx - f.ax), y = Math.round(p.sy - f.ay);
+    // locomotion frames are quantised in gait; place the sprite where that quantised gait puts the body so the
+    // planted foot stays fixed on the court (sprites.js anchorShift)
+    const sh = this.sprites.anchorShift(i);
+    const q = sh.x || sh.z ? camera.project(pl.pos.x + sh.x, 0, pl.pos.z + sh.z) : p;
+    const x = Math.round(q.sx - f.ax), y = Math.round(q.sy - f.ay);
     ctx.drawImage(f.canvas, x, y);
   }
 

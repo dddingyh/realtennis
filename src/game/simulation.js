@@ -86,6 +86,7 @@ export class Simulation {
     this.nextWalkAt = null;
     this.lastShot = null;
     this._plans = [null, null];
+    this._recov = [null, null];
     this.stats = this._newStats();
     this.state = {
       time: 0, surface: this.surfaceKey, ball: this.ball, players: this.players,
@@ -771,21 +772,40 @@ export class Simulation {
   _applyIntents(dt) {
     for (let i = 0; i < 2; i++) {
       const pl = this.players[i];
-      if (this.ais[i]) continue;                       // AI writes pl.intent itself
+      if (this.ais[i]) continue;                       // AI gives its own move orders
       const man = pl.manual;
-      if ((pl.serve && !pl.serve.free) || pl.walkTarget || this.phase === 'match-over') { pl.intent.x = 0; pl.intent.z = 0; continue; }
-      if (this.phase === 'serve-prep' && i === this.match.server) { pl.intent.x = 0; pl.intent.z = 0; continue; }
-      let ix = man.x, iz = man.z;
-      if (pl.autoMove !== 'off' && (this.phase === 'rally' || this.phase === 'serving' || this.phase === 'serve-prep')) {
-        const a = this._autoVector(i, pl.autoMove === 'full');
-        if (a) {
-          const mm = Math.hypot(man.x, man.z);
-          if (pl.autoMove === 'full') { ix = a.x * a.w; iz = a.z * a.w; }
-          else { const k = (mm < 0.2 ? 0.95 : 0.35) * a.w; ix = man.x + a.x * k; iz = man.z + a.z * k; }
-        } else if (pl.autoMove === 'full') { ix = 0; iz = 0; }
-      }
-      pl.intent.x = ix; pl.intent.z = iz;
+      if ((pl.serve && !pl.serve.free) || pl.walkTarget || this.phase === 'match-over') { pl.hold(); continue; }
+      if (this.phase === 'serve-prep' && i === this.match.server) { pl.hold(); continue; }
+      const mm = Math.hypot(man.x, man.z);
+      const auto = pl.autoMove !== 'off' && (this.phase === 'rally' || this.phase === 'serving' || this.phase === 'serve-prep');
+      const goal = auto ? this._autoGoal(i) : null;
+      if (!auto || (pl.autoMove === 'assist' && mm > 0.2)) {
+        pl.target = null; pl.intent.x = man.x; pl.intent.z = man.z;  // manual steering (assist: overrides while held)
+      } else if (goal) pl.moveTo(goal.x, goal.z, goal.timeLeft ?? null);
+      else if (pl.autoMove === 'full') pl.hold();
+      else { pl.target = null; pl.intent.x = man.x; pl.intent.z = man.z; }
     }
+  }
+
+  /**
+   * Auto-move goal for a human player: the planned interception stand (decided once per plan, after the split step /
+   * reaction), or a recovery spot once the ball is on its way to the opponent. Small re-plans are absorbed by the
+   * player's start/stop hysteresis, so the player is either clearly moving or clearly set.
+   */
+  _autoGoal(i) {
+    const pl = this.players[i], b = this.ball;
+    const c = this._plan(i);
+    if (c) {
+      if (pl.splitT > 0 || this.time - this.rally.lastHitTime < 0.12) return pl.target;   // reacting: keep last order
+      return c.plan ? { x: c.plan.stand.x, z: c.plan.stand.z, timeLeft: c.plan.t - (this.time - c.time) } : pl.target;
+    }
+    const away = this.phase === 'rally' && b.inPlay && b.lastHitBy === i;
+    if (!away) return null;
+    const r = this._recov[i];
+    if (!r || r.key !== this.hitCount) {
+      this._recov[i] = { key: this.hitCount, x: clamp(this.lastShot && this.lastShot.target ? this.lastShot.target.x * 0.3 : 0, -1.5, 1.5), z: pl.facing * (COURT.halfLength + 0.8) };
+    }
+    return this._recov[i];
   }
 
   /** Cached interception plan for player i (used by assist / hint). */
@@ -797,28 +817,9 @@ export class Simulation {
     const key = this.hitCount * 4 + b.bounces;
     if (c && c.key === key && this.time - c.time < 0.15) return c;
     const { path } = predictPath({ pos: b.pos, vel: b.vel, spin: b.spin, bounces: b.bounces }, this.surfaceKey);
-    const plan = planInterception(path, pl, { vmax: PLAYER.maxSpeed * 0.95, accel: PLAYER.accel, reactDelay: 0.05, allowVolley: Math.abs(pl.pos.z) < 6.5, prefY: 0.95, prefDepth: 0.3, yMax: 1.7 });
+    const plan = planInterception(path, pl, { vmax: PLAYER.maxSpeed * 0.95, accel: PLAYER.accel0, reactDelay: 0.15, allowVolley: Math.abs(pl.pos.z) < 6.5, prefY: 0.95, prefDepth: 0.3, yMax: 1.7 });
     this._plans[i] = { key, time: this.time, plan };
     return this._plans[i];
-  }
-
-  _autoVector(i, full) {
-    const pl = this.players[i];
-    const c = this._plan(i);
-    if (c && c.plan) {
-      const s = c.plan.stand;
-      const dx = s.x - pl.pos.x, dz = s.z - pl.pos.z, d = Math.hypot(dx, dz);
-      if (d < 0.08) return { x: 0, z: 0, w: 0 };
-      return { x: dx / d, z: dz / d, w: clamp(d / 0.45, 0, 1) };
-    }
-    // recover toward the middle of the baseline when the ball is away
-    const b = this.ball;
-    const away = (this.phase === 'rally' && b.inPlay && b.lastHitBy === i);
-    if (!away) return null;
-    const hx = clamp(b.pos.x * 0.15, -1.2, 1.2), hz = pl.facing * (COURT.halfLength + 0.9);
-    const dx = hx - pl.pos.x, dz = hz - pl.pos.z, d = Math.hypot(dx, dz);
-    if (d < 0.3) return { x: 0, z: 0, w: 0 };
-    return { x: dx / d, z: dz / d, w: full ? clamp(d / 1.5, 0, 0.8) : clamp(d / 2, 0, 0.45) };
   }
 
   // ================================================================= state mirror

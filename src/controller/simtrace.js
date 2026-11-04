@@ -61,12 +61,38 @@ export const ARCHETYPES = {
 };
 const ARM = 0.40, GRIP_TO_SENSOR = 0.075, WARP = 1.15;
 
+// peak of the speed profile d/dtau minJerk(tau^WARP): contact (peak |omega|) happens there
+const PROFILE = (() => {
+  let best = 0, tPk = 0.5;
+  for (let i = 1; i < 4000; i++) {
+    const t = i / 4000, h = 1e-4;
+    const v = (minJerk(Math.pow(t + h, WARP)) - minJerk(Math.pow(t - h, WARP))) / (2 * h);
+    if (v > best) { best = v; tPk = t; }
+  }
+  return { tPk, sDotPk: best, sPk: minJerk(Math.pow(tPk, WARP)) };
+})();
+export const SWING_PROFILE = PROFILE;
+const TRUNC_T = 0.035;   // s: time constant of the abrupt stop of a truncated follow-through
+
+// progression s(tau) of the swing, including optional jerkiness and truncated follow-through
+function sOf(P, tau) {
+  tau = Math.max(0, Math.min(1, tau));
+  let s = minJerk(Math.pow(tau, WARP));
+  if (P.trunc > 0 && tau > PROFILE.tPk) {
+    const dt = (tau - PROFILE.tPk) * P.D;
+    const sStop = PROFILE.sPk + (PROFILE.sDotPk / P.D) * TRUNC_T * (1 - Math.exp(-dt / TRUNC_T));
+    s += P.trunc * (sStop - s);
+  }
+  if (P.jerk > 0) s += P.jerk * 0.02 * Math.sin(2 * Math.PI * 14 * tau * P.D + (P.jph || 0)) * Math.sin(Math.PI * tau) ** 2;
+  return s;
+}
 function swingGeometry(P, tau) { // reference (CCW) geometry; tau in [0,1]
-  const s = minJerk(Math.pow(Math.max(0, Math.min(1, tau)), WARP));
+  const s = sOf(P, tau);
   const psi = (P.psi0 + P.dpsi * s) * DEG;
   const th = (P.theta0 + P.dtheta * s) * DEG;
-  const e = (P.e0 + P.de * s) * DEG;
-  return geom(psi, th, P.thl * DEG, e, 0.25 * s, P.zoff || 0);
+  let eDeg = P.e0 + P.de * s;
+  if (P.jerk > 0) eDeg += P.jerk * 5 * Math.sin(2 * Math.PI * 11 * tau * P.D + (P.jph || 0) * 1.7) * Math.sin(Math.PI * Math.max(0, Math.min(1, tau))) ** 2;
+  return geom(psi, th, P.thl * DEG, eDeg * DEG, 0.25 * Math.min(1, s), P.zoff || 0);
 }
 function geom(psi, th, thl, e, body, zoff) {
   const l = [Math.cos(thl) * Math.cos(psi), Math.cos(thl) * Math.sin(psi), Math.sin(thl)];
@@ -107,17 +133,27 @@ export class PhoneSim {
   neutralR() { return toR(this.neutralGeom(this.hand === 'L'), this.flip ? -1 : 1); }
 
   // Start a swing; returns ground truth (contact time is filled in once known, see truth.contactT).
-  startSwing({ shot = 'flat', side = 'fh', speed = 1, sloppy = 0, extra = {} } = {}) {
+  // Analog knobs (all optional; default = archetype with random jitter):
+  //   contactYaw (deg, + = early: face already turned across the body, i.e. cross-court), pathDeg (hand-path elevation
+  //   at contact), faceDeg (hitting-face elevation at contact, + = open), rollDps (face elevation rate at contact,
+  //   - = closing / rolling over), jerk 0..1 (shaky, uneven acceleration + face wobble), truncate 0..1 (abrupt stop
+  //   right after contact instead of a follow-through).
+  startSwing({ shot = 'flat', side = 'fh', speed = 1, sloppy = 0, contactYaw = null, pathDeg = null, faceDeg = null, rollDps = null,
+    jerk = 0, truncate = 0, extra = {} } = {}) {
     const A = ARCHETYPES[shot], r = this.rng;
     const mirrorGeo = (this.hand === 'R') === (side === 'bh');
     const sp = speed * r.range(0.9 - 0.25 * sloppy, 1.15 + 0.3 * sloppy);
     const D = A.D / sp * r.range(0.92, 1.1);
-    const sc = minJerk(Math.pow(0.52, WARP));
+    const sc = PROFILE.sPk;
     const dpsi = A.dpsi * r.range(0.9, 1.1);
-    const dtheta = A.dtheta * r.range(0.8 - 0.25 * sloppy, 1.2 + 0.25 * sloppy) + r.n() * (4 + 14 * sloppy);
-    const ec = A.ec + r.n() * A.ecSd * (1 + 1.2 * sloppy), de = A.de * r.range(0.7 - 0.4 * sloppy, 1.3 + 0.4 * sloppy);
+    const dtheta = pathDeg !== null ? dpsi * Math.tan(pathDeg * DEG)
+      : A.dtheta * r.range(0.8 - 0.25 * sloppy, 1.2 + 0.25 * sloppy) + r.n() * (4 + 14 * sloppy);
+    const ec = faceDeg !== null ? faceDeg : A.ec + r.n() * A.ecSd * (1 + 1.2 * sloppy);
+    const de = rollDps !== null ? rollDps * D / PROFILE.sDotPk : A.de * r.range(0.7 - 0.4 * sloppy, 1.3 + 0.4 * sloppy);
+    const psiC = contactYaw !== null ? contactYaw : r.n() * 4 * (1 + sloppy);
     const thc = r.n() * 5 * (1 + 2 * sloppy);               // arm elevation at contact
-    const P = { psi0: -75 + r.n() * 6 * (1 + 2 * sloppy), dpsi, theta0: thc - dtheta * sc, dtheta, e0: ec - de * sc, de,
+    const P = { psi0: psiC - dpsi * sc, dpsi, theta0: thc - dtheta * sc, dtheta, e0: ec - de * sc, de, D,
+      jerk, trunc: truncate, jph: r.u() * 6.28,
       thl: 22 + r.n() * 8 * (1 + sloppy), zoff: r.n() * 0.04, ...extra };
     const fz = (side === 'fh' ? 1 : -1) * (this.flip ? -1 : 1);
     const prep = r.range(0.9, 1.25), hold = r.range(0.08, 0.2);
@@ -125,9 +161,12 @@ export class PhoneSim {
     const gn0 = this.neutralGeom(this.hand === 'L');
     const g0 = swingGeometry(P, 0), g0m = mirrorGeo ? mirrorX(g0) : g0;
     const Rs = toR(g0m, fz);
-    this.script = { t0: this.tick, prep, hold, D, P, mirrorGeo, fz, Rn0, pn0: gn0.p, Rs, ps: g0m.p, follow: 0.25, ret: 0.9, truth: { contactT: null, shot, side, hand: this.hand } };
+    const truth = { contactT: null, shot, side, hand: this.hand, speed: sp, D,
+      contactYaw: psiC, aimDeg: mirrorGeo ? psiC : -psiC,          // + = face points to the player's right
+      pathDeg: Math.atan2(dtheta, dpsi) / DEG, faceDeg: ec, rollDps: de * PROFILE.sDotPk / D, jerk, truncate };
+    this.script = { t0: this.tick, prep, hold, D, P, mirrorGeo, fz, Rn0, pn0: gn0.p, Rs, ps: g0m.p, follow: 0.25, ret: 0.9, truth };
     this.contactTrack = { best: 0, t: 0 };
-    return this.script.truth;
+    return truth;
   }
 
   poseAt(tk) {
@@ -147,7 +186,20 @@ export class PhoneSim {
     } else {
       const ts = (tk - sc.t0) / 1000;
       const tPrep = sc.prep, tHold = tPrep + sc.hold, tSw = tHold + sc.D, tFol = tSw + sc.follow, tEnd = tFol + sc.ret;
-      if (ts < tPrep) { const u = minJerk(ts / tPrep); const Rn = this.neutralR(); R = mslerp(Rn, sc.Rs, u); const pn = this.neutralGeom(this.hand === 'L').p; p = vadd(vmul(pn, 1 - u), vmul(sc.ps, u)); }
+      if (ts < tPrep) {
+        // backswing: interpolate the stroke parameters from the ready pose (head forward) to the swing start, so the
+        // racket turns back the way a real backswing does (opposite yaw to the forward swing); blend out any tilt offset.
+        const u = minJerk(ts / tPrep), P = sc.P, lerp = (a, b) => a + (b - a) * u;
+        const pitch = this.tilt[0];
+        let g = geom(lerp(90, P.psi0) * DEG, lerp(0, P.theta0) * DEG, lerp(30 + pitch, P.thl) * DEG, lerp(0, P.e0) * DEG, 0, lerp(0, P.zoff || 0));
+        let g0 = geom(90 * DEG, 0, (30 + pitch) * DEG, 0, 0, 0);
+        if (sc.mirrorGeo) { g = mirrorX(g); g0 = mirrorX(g0); }
+        const Rp = toR(g, sc.fz), Rp0 = toR(g0, sc.fz);
+        const Rn = this.neutralR(), pn = this.neutralGeom(this.hand === 'L').p;
+        const D0 = mmul(Rn, mT(Rp0));
+        R = mmul(mslerp(D0, [1, 0, 0, 0, 1, 0, 0, 0, 1], u), Rp);
+        p = vadd(g.p, vmul(vsub(pn, g0.p), 1 - u));
+      }
       else if (ts < tHold) { R = sc.Rs; p = sc.ps; }
       else if (ts < tSw) {
         let g = swingGeometry(sc.P, (ts - tHold) / sc.D); if (sc.mirrorGeo) g = mirrorX(g);
@@ -207,10 +259,10 @@ export class PhoneSim {
 }
 
 // Convenience: full swing trace (hold, swing, rest). Returns {samples, truth}.
-export function genSwingTrace({ shot, side, hand = 'R', flip = false, hz = 100, seed = 1, speed = 1, noise = 1, sloppy = 0, restMs = 900, tailMs = 1500 }) {
+export function genSwingTrace({ shot, side, hand = 'R', flip = false, hz = 100, seed = 1, speed = 1, noise = 1, sloppy = 0, restMs = 900, tailMs = 1500, ...knobs }) {
   const sim = new PhoneSim({ hand, hz, seed, flip, noise });
   const samples = sim.advance(restMs);
-  const truth = sim.startSwing({ shot, side, speed, sloppy });
+  const truth = sim.startSwing({ shot, side, speed, sloppy, ...knobs });
   const t0 = sim.tick;
   while (sim.busy) samples.push(...sim.advance(50));
   samples.push(...sim.advance(tailMs));
