@@ -8,6 +8,8 @@ import { SpriteFactory } from './sprites.js';
 import { ellipseSpans, hex, css, rgba } from './raster.js';
 
 const W = RENDER.width, H = RENDER.height;
+// ball pixel diameter range scales with resolution (360p: 1-4 px, 540p: 2-5 px)
+const BALL_MIN = H >= 480 ? 2 : 1, BALL_MAX = H >= 480 ? 5 : 4;
 const BALL_C = '#d9f23a', BALL_D = '#8cb31c', BALL_L = '#fbffc4', BALL_O = '#1a2a10';
 
 export class Renderer {
@@ -137,7 +139,7 @@ export class Renderer {
         this.dotLine(ctx, a.x, a.y, c.x, c.y);
       }
     }
-    const d = Math.max(1, Math.min(4, Math.round(BALL.radius * 2 * p.scale * 1.55)));
+    const d = Math.max(BALL_MIN, Math.min(BALL_MAX, Math.round(BALL.radius * 2 * p.scale * 1.55)));
     const cx = Math.round(p.sx), cy = Math.round(p.sy);
     this.pixelBall(ctx, cx, cy, d);
   }
@@ -188,7 +190,7 @@ export class Renderer {
       const a = 1 - q.life / q.max;
       const col = q.kind === 'clay' ? `rgba(232,160,110,${a})` : q.kind === 'grass' ? `rgba(120,180,80,${a})` : `rgba(240,245,255,${a * 0.8})`;
       ctx.fillStyle = col;
-      const sz = q.kind === 'clay' && a > 0.5 ? 2 : 1;
+      const sz = (q.kind === 'clay' && a > 0.5 ? 2 : 1) + (H >= 480 && a > 0.4 ? 1 : 0);
       ctx.fillRect(Math.round(p.sx), Math.round(p.sy), sz, sz);
     }
   }

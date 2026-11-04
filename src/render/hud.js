@@ -1,9 +1,15 @@
-// In-canvas HUD (640x360): TV score bug, serve speed, last-shot panel, big calls, timing ring, connection icon.
+// In-canvas HUD (layout derived from RENDER size): TV score bug, serve speed, last-shot panel, big calls, timing ring, connection icon.
 import { RENDER } from '../config.js';
 import { camera } from './camera.js';
-import { drawPixText, textWidth, drawText, measureText } from './font.js';
+import { drawPixText, textWidth, drawText, measureText, fontHeight } from './font.js';
 
 const W = RENDER.width, H = RENDER.height;
+// UI scale relative to the original 360-line design; BIG = use the 10x14 pixel font for primary text.
+const U = H / 360;
+const BIG = H >= 480;
+const FMAIN = BIG ? 'big' : 'small';
+const u = (v) => Math.round(v * U);
+const CJK = Math.round(12 * U);
 const PANEL = '#0c1424', EDGE = '#3c4d70', GOLD = '#f2c230', WHITE = '#f4f4ee', DIM = '#8fa0c0';
 const SHOT_CN = { flat: '平击', topspin: '上旋', slice: '切削', lob: '挑高', volley: '截击', smash: '高压', serve: '发球' };
 const SIDE_CN = { fh: '正手', bh: '反手' };
@@ -34,15 +40,22 @@ export class Hud {
   pushCall(text, dur = 1.5) { this.calls.push({ text, t: 0, dur }); if (this.calls.length > 3) this.calls.shift(); }
 
   panel(ctx, x, y, w, h) {
-    ctx.fillStyle = '#05080f'; ctx.fillRect(x + 1, y + 1, w, h);
+    const b = BIG ? 2 : 1;
+    ctx.fillStyle = '#05080f'; ctx.fillRect(x + b, y + b, w, h);
     ctx.fillStyle = PANEL; ctx.fillRect(x, y, w, h);
     ctx.fillStyle = EDGE; ctx.fillRect(x, y, w, 1); ctx.fillRect(x, y + h - 1, w, 1); ctx.fillRect(x, y, 1, h); ctx.fillRect(x + w - 1, y, 1, h);
+    if (BIG) { ctx.fillStyle = '#1a2846'; ctx.fillRect(x + 1, y + 1, w - 2, 1); }
   }
 
-  textFit(ctx, str, x, y, color, maxW) {
-    if (/^[\x20-\x7e]*$/.test(str)) return drawPixText(ctx, str, x, y + 2, color, 1);
-    return drawText(ctx, str, x, y - 1, color, 12);
+  // primary text (names / digits): big pixel font; CJK through the binarised system font
+  mainText(ctx, str, x, y, color, rowH) {
+    if (/^[\x20-\x7e]*$/.test(str)) {
+      const fh = fontHeight(1, FMAIN);
+      return drawPixText(ctx, str, x, y + Math.round((rowH - fh) / 2), color, 1, { font: FMAIN });
+    }
+    return drawText(ctx, str, x, y + Math.round((rowH - CJK * 1.3) / 2), color, CJK, { bold: true });
   }
+  mainW(str) { return textWidth(str, 1, FMAIN); }
 
   draw(ctx, state, dt, ui = {}) {
     this.t += dt;
@@ -56,51 +69,63 @@ export class Hud {
   }
 
   scoreBug(ctx, state, ui) {
-    const m = state.match, X = 6, Y = 6;
+    const m = state.match, X = u(6), Y = u(6);
     const sets = m.sets || [];
-    const colSet = 12, nameW = 46;
-    const w = 6 + nameW + sets.length * colSet + 16 + 24;
-    const rh = 15;
+    const rh = u(15) + (BIG ? 1 : 0);            // 23 px rows at 540p
+    const colSet = u(12), nameW = u(48), gameW = u(16), ptsW = u(26), lead = u(14);
+    const w = lead + nameW + sets.length * colSet + gameW + ptsW + 1;
     this.panel(ctx, X, Y, w, rh * 2 + 2);
     for (let i = 0; i < 2; i++) {
       const y = Y + 1 + i * rh;
       const pl = state.players[i];
       if (i === 1) { ctx.fillStyle = EDGE; ctx.fillRect(X + 1, y, w - 2, 1); }
-      // team colour bar
-      ctx.fillStyle = pl.look?.shirt || '#fff'; ctx.fillRect(X + 1, y + (i ? 1 : 0), 3, rh - (i ? 1 : 0));
-      // serve ball
-      if (m.server === i) { ctx.fillStyle = '#d9f23a'; ctx.fillRect(X + 6, y + 6, 3, 3); ctx.fillStyle = '#7a9a10'; ctx.fillRect(X + 8, y + 8, 1, 1); }
+      const top = y + (i ? 1 : 0), hh = rh - (i ? 1 : 0);
+      ctx.fillStyle = pl.look?.shirt || '#fff'; ctx.fillRect(X + 1, top, u(3), hh);
+      if (m.server === i) {
+        const bx = X + u(6), by = y + Math.round(rh / 2) - 2, bs = BIG ? 5 : 3;
+        ctx.fillStyle = '#1a2a10'; ctx.fillRect(bx - 1, by, bs + 2, bs); ctx.fillRect(bx, by - 1, bs, bs + 2);
+        ctx.fillStyle = '#d9f23a'; ctx.fillRect(bx, by, bs, bs);
+        ctx.fillStyle = '#fbffc4'; ctx.fillRect(bx, by, 1, 1);
+        ctx.fillStyle = '#8cb31c'; ctx.fillRect(bx + bs - 1, by + bs - 1, 1, 1);
+      }
       const nm = pl.name || (i ? 'AI' : 'YOU');
-      this.textFit(ctx, nm, X + 12, y + 3, i === m.server ? WHITE : '#c4cfe4', nameW - 8);
-      let cx = X + 6 + nameW;
-      for (const s of sets) {
-        const win = s[i] > s[1 - i];
-        drawPixText(ctx, String(s[i]), cx + 3, y + 4, win ? WHITE : DIM, 1);
+      this.mainText(ctx, nm, X + lead, y, i === m.server ? WHITE : '#c4cfe4', rh);
+      let cx = X + lead + nameW;
+      for (const st of sets) {
+        const win = st[i] > st[1 - i];
+        const t = String(st[i]);
+        this.mainText(ctx, t, cx + Math.round((colSet - this.mainW(t)) / 2), y, win ? WHITE : DIM, rh);
         cx += colSet;
       }
-      // games (highlight)
-      ctx.fillStyle = '#17315c'; ctx.fillRect(cx, y + (i ? 1 : 0), 16, rh - (i ? 1 : 0));
-      drawPixText(ctx, String(m.games[i]), cx + 8 - (String(m.games[i]).length * 6 - 1) / 2 | 0, y + 4, WHITE, 1);
-      cx += 16;
-      // points
-      ctx.fillStyle = GOLD; ctx.fillRect(cx, y + (i ? 1 : 0), 24, rh - (i ? 1 : 0));
+      ctx.fillStyle = '#17315c'; ctx.fillRect(cx, top, gameW, hh);
+      const g = String(m.games[i]);
+      this.mainText(ctx, g, cx + Math.round((gameW - this.mainW(g)) / 2), y, WHITE, rh);
+      cx += gameW;
+      ctx.fillStyle = GOLD; ctx.fillRect(cx, top, ptsW, hh);
+      if (BIG) { ctx.fillStyle = '#ffe07a'; ctx.fillRect(cx, top, ptsW, 1); }
       const pt = ptsLabel(m, i);
-      drawPixText(ctx, pt, cx + 12 - ((pt.length * 6 - 1) / 2 | 0), y + 4, '#1a1a22', 1);
+      this.mainText(ctx, pt, cx + Math.round((ptsW - this.mainW(pt)) / 2), y, '#1a1a22', rh);
     }
-    let yy = Y + rh * 2 + 5;
-    if (m.faultCount === 1 && (m.phase === 'serve-prep' || m.phase === 'serving' || m.phase === 'rally')) {
-      this.panel(ctx, X, yy, 62, 11); drawPixText(ctx, '2ND SERVE', X + 5, yy + 2, '#ffd23f', 1); yy += 14;
-    }
-    if (m.isTiebreak) { this.panel(ctx, X, yy, 50, 11); drawPixText(ctx, 'TIEBREAK', X + 4, yy + 2, GOLD, 1); yy += 14; }
+    let yy = Y + rh * 2 + u(5);
+    const tagH = u(11) + (BIG ? 1 : 0);
+    const tag = (text, col) => {
+      const tw = textWidth(text) + u(10);
+      this.panel(ctx, X, yy, tw, tagH); drawPixText(ctx, text, X + u(5), yy + Math.round((tagH - 7) / 2), col, 1); yy += tagH + u(3);
+    };
+    if (m.faultCount === 1 && (m.phase === 'serve-prep' || m.phase === 'serving' || m.phase === 'rally')) tag('2ND SERVE', '#ffd23f');
+    if (m.isTiebreak) tag('TIEBREAK', GOLD);
     if (this.serveInfo) {
       const a = this.serveInfo.t > 3.2 ? 1 - (this.serveInfo.t - 3.2) / 0.8 : 1;
       if (a > 0.05) {
         ctx.globalAlpha = Math.max(0, a);
         const txt = `${this.serveInfo.kmh}`;
-        this.panel(ctx, X, yy, 86, 14);
-        drawPixText(ctx, 'SERVE', X + 5, yy + 4, DIM, 1);
-        drawPixText(ctx, txt, X + 38, yy + 4, WHITE, 1);
-        drawPixText(ctx, 'KM/H', X + 38 + textWidth(txt) + 4, yy + 4, DIM, 1);
+        const ph = u(14) + (BIG ? 2 : 0);
+        const lw = textWidth('SERVE'), kw = textWidth('KM/H');
+        const pw = u(5) + lw + u(6) + this.mainW(txt) + u(4) + kw + u(6);
+        this.panel(ctx, X, yy, pw, ph);
+        drawPixText(ctx, 'SERVE', X + u(5), yy + Math.round((ph - 7) / 2), DIM, 1);
+        this.mainText(ctx, txt, X + u(5) + lw + u(6), yy, WHITE, ph);
+        drawPixText(ctx, 'KM/H', X + u(5) + lw + u(6) + this.mainW(txt) + u(4), yy + Math.round((ph - 7) / 2), DIM, 1);
         ctx.globalAlpha = 1;
       }
     }
@@ -109,28 +134,32 @@ export class Hud {
   lastShot(ctx, state) {
     const ls = state.lastShot;
     if (!ls) return;
-    const w = 128, h = 40, x = W - w - 6, y = H - h - 6;
+    const w = u(132), h = u(42), x = W - w - u(6), y = H - h - u(6);
     const mine = ls.by === 0;
     this.panel(ctx, x, y, w, h);
     ctx.fillStyle = mine ? (state.players[0].look?.shirt || '#e23d3d') : (state.players[1].look?.shirt || '#f2c230');
-    ctx.fillRect(x + 1, y + 1, 3, h - 2);
+    ctx.fillRect(x + 1, y + 1, u(3), h - 2);
     const cn = `${SHOT_CN[ls.shot] || ls.shot}${ls.side ? ' ' + (SIDE_CN[ls.side] || '') : ''}`;
-    drawText(ctx, cn, x + 9, y + 3, WHITE, 12, { shadow: '#000' });
+    drawText(ctx, cn, x + u(9), y + u(3), WHITE, CJK, { shadow: '#000', bold: BIG });
     const who = mine ? 'YOU' : 'OPP';
-    drawPixText(ctx, who, x + w - 22, y + 6, mine ? '#ff8a8a' : '#ffe27a', 1);
-    drawPixText(ctx, String(Math.round(ls.speedKmh)), x + 9, y + 20, WHITE, 1);
-    drawPixText(ctx, 'KM/H', x + 9 + textWidth(String(Math.round(ls.speedKmh))) + 3, y + 20, DIM, 1);
-    drawPixText(ctx, String(Math.round(ls.spinRpm / 10) * 10), x + 68, y + 20, WHITE, 1);
-    drawPixText(ctx, 'RPM', x + 68 + textWidth(String(Math.round(ls.spinRpm / 10) * 10)) + 3, y + 20, DIM, 1);
+    drawPixText(ctx, who, x + w - textWidth(who) - u(6), y + u(6), mine ? '#ff8a8a' : '#ffe27a', 1);
+    const rowY = y + u(19);
+    const sp = String(Math.round(ls.speedKmh)), rpm = String(Math.round(ls.spinRpm / 10) * 10);
+    const bigH = fontHeight(1, FMAIN);
+    drawPixText(ctx, sp, x + u(9), rowY, WHITE, 1, { font: FMAIN });
+    drawPixText(ctx, 'KM/H', x + u(9) + this.mainW(sp) + u(3), rowY + bigH - 7, DIM, 1);
+    const rx = x + u(70);
+    drawPixText(ctx, rpm, rx, rowY, WHITE, 1, { font: FMAIN });
+    drawPixText(ctx, 'RPM', rx + this.mainW(rpm) + u(3), rowY + bigH - 7, DIM, 1);
     // quality bar
-    const q = Math.max(0, Math.min(1, ls.quality || 0)), bw = 110, bx = x + 9, by = y + h - 9;
-    ctx.fillStyle = '#1a2640'; ctx.fillRect(bx, by, bw, 5);
-    const segs = 22;
+    const q = Math.max(0, Math.min(1, ls.quality || 0)), segs = 22, sw = u(5), bw = segs * sw + 1, bx = x + u(9), bh = BIG ? 7 : 5, by = y + h - bh - u(3);
+    ctx.fillStyle = '#1a2640'; ctx.fillRect(bx, by, bw, bh);
     for (let i = 0; i < segs; i++) {
       if (i / segs >= q) break;
       const f = i / segs;
       ctx.fillStyle = f < 0.35 ? '#e4534a' : f < 0.65 ? '#f2c230' : '#5ee07a';
-      ctx.fillRect(bx + 1 + i * 5, by + 1, 4, 3);
+      ctx.fillRect(bx + 1 + i * sw, by + 1, sw - 1, bh - 2);
+      if (BIG) { ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fillRect(bx + 1 + i * sw, by + 1, sw - 1, 1); }
     }
   }
 
@@ -139,13 +168,13 @@ export class Hud {
     if (ui.timingRing === false || !h || !h.reachable || h.contactIn == null || !b.visible) return;
     const p = camera.project(b.pos.x, b.pos.y, b.pos.z);
     const ci = Math.max(0, h.contactIn);
-    const r = Math.round(4 + Math.min(1, ci / 0.6) * 22);
+    const r = Math.round(u(4) + Math.min(1, ci / 0.6) * u(22));
     const good = ci < 0.09;
     const col = good ? '#5dff8a' : ci < 0.25 ? '#ffe45c' : '#ffffff';
     ctx.fillStyle = col;
     ctx.globalAlpha = good ? 1 : 0.85;
     this.ring(ctx, Math.round(p.sx), Math.round(p.sy), r, 1);
-    ctx.globalAlpha = 0.5; this.ring(ctx, Math.round(p.sx), Math.round(p.sy), 5, 2);
+    ctx.globalAlpha = 0.5; this.ring(ctx, Math.round(p.sx), Math.round(p.sy), u(5), 2);
     ctx.globalAlpha = 1;
   }
   ring(ctx, cx, cy, r, skip) {
@@ -164,28 +193,33 @@ export class Hud {
     }
     const c = this.calls[this.calls.length - 1];
     if (!c) return;
-    const pop = Math.min(1, c.t / 0.14);
-    const scale = c.text.length > 9 ? 3 : 4;
+    // big calls use the 10x14 font at an integer scale (3x = 42 px letters at 540p)
+    const font = BIG ? 'big' : 'small';
+    const scale = BIG ? (c.text.length > 9 ? 2 : 3) : (c.text.length > 9 ? 3 : 4);
     const sc = c.t < 0.14 ? scale + 1 : scale;
     const col = CALL_COL[c.text] || '#fff';
-    const w = textWidth(c.text, sc), x = Math.round((W - w) / 2), y = 66;
+    const w = textWidth(c.text, sc, font), hgt = fontHeight(sc, font);
+    const x = Math.round((W - w) / 2), y = u(66) + Math.round((fontHeight(scale, font) - hgt) / 2);
     const fade = c.t > c.dur - 0.3 ? Math.max(0, (c.dur - c.t) / 0.3) : 1;
     ctx.globalAlpha = fade;
-    // plate
-    ctx.fillStyle = 'rgba(8,12,22,0.55)'; ctx.fillRect(x - 10, y - 6, w + 20, 7 * sc + 12);
-    drawPixText(ctx, c.text, x, y, col, sc, { outline: '#0a0a12' });
+    ctx.fillStyle = 'rgba(8,12,22,0.55)'; ctx.fillRect(x - u(10), y - u(6), w + u(20), hgt + u(12));
+    drawPixText(ctx, c.text, x, y, col, sc, { outline: '#0a0a12', font });
     ctx.globalAlpha = 1;
   }
 
   phoneIcon(ctx, status) {
-    const x = W - 26, y = 8;
-    const col = status === 'connected' ? '#5dff8a' : (status === 'connecting' || status === 'waiting' || status === 'pairing') ? '#ffe45c' : '#ff6b6b';
-    ctx.fillStyle = '#05080f'; ctx.fillRect(x - 1, y - 1, 20, 17);
-    ctx.fillStyle = PANEL; ctx.fillRect(x - 2, y - 2, 20, 17);
-    ctx.fillStyle = EDGE; ctx.fillRect(x - 2, y - 2, 20, 1); ctx.fillRect(x - 2, y + 14, 20, 1); ctx.fillRect(x - 2, y - 2, 1, 17); ctx.fillRect(x + 17, y - 2, 1, 17);
-    // phone glyph
-    ctx.fillStyle = '#cfd8ea'; ctx.fillRect(x + 1, y, 7, 12); ctx.fillStyle = '#18233a'; ctx.fillRect(x + 2, y + 1, 5, 9);
-    ctx.fillStyle = col; ctx.fillRect(x + 11, y + 4, 4, 4);
-    ctx.fillStyle = '#05080f'; ctx.fillRect(x + 11, y + 4, 1, 1);
+    const k = BIG ? 2 : 1;
+    const bw = 20 * k - (k - 1) * 6, bh = 17 * k - (k - 1) * 6;
+    const x = W - bw - u(6) + 2, y = u(8);
+    const col = status === 'connected' ? '#5dff8a' : status === 'connecting' ? '#ffe45c' : '#ff6b6b';
+    ctx.fillStyle = '#05080f'; ctx.fillRect(x - 1, y - 1, bw, bh);
+    ctx.fillStyle = PANEL; ctx.fillRect(x - 2, y - 2, bw, bh);
+    ctx.fillStyle = EDGE; ctx.fillRect(x - 2, y - 2, bw, 1); ctx.fillRect(x - 2, y + bh - 3, bw, 1); ctx.fillRect(x - 2, y - 2, 1, bh); ctx.fillRect(x + bw - 3, y - 2, 1, bh);
+    const pw = BIG ? 10 : 7, ph = BIG ? 17 : 12;
+    ctx.fillStyle = '#cfd8ea'; ctx.fillRect(x + 1, y, pw, ph); ctx.fillStyle = '#18233a'; ctx.fillRect(x + 2, y + 1, pw - 2, ph - 3);
+    ctx.fillStyle = '#8fa0c0'; ctx.fillRect(x + 1 + (pw >> 1) - 1, y + ph - 2, 2, 1);
+    const ds = BIG ? 6 : 4;
+    ctx.fillStyle = col; ctx.fillRect(x + pw + 4, y + (ph >> 1) - (ds >> 1), ds, ds);
+    ctx.fillStyle = '#05080f'; ctx.fillRect(x + pw + 4, y + (ph >> 1) - (ds >> 1), 1, 1);
   }
 }

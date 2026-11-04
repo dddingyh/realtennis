@@ -29,6 +29,7 @@ export class Crowd {
         ph: rnd() * 6.28, sp: 0.6 + rnd() * 1.4, thr: rnd(), big: rnd() < 0.18, sz: 0.88 + rnd() * 0.25, flash: 0,
         hat: rnd() < 0.08 ? SHIRTS[(rnd() * SHIRTS.length) | 0] : 0, skipped: rnd() < 0.14,
         dark: (row >= 5 ? 0.74 : 1) * (shadowed(x, z) ? 0.78 : 1),
+        cloth: (rnd() * 5) | 0, hairStyle: (rnd() * 6) | 0, inner: SHIRTS[(rnd() * SHIRTS.length) | 0], shades: rnd() < 0.12,
       });
     };
     const rows = Math.floor((TOPH - BH) / S / ROW);
@@ -52,6 +53,11 @@ export class Crowd {
     }
     list.sort((a, b) => b.depth - a.depth);
     this.spec = list.filter((s) => !s.skipped);
+    for (const sp of this.spec) {      // pre-shaded palette per spectator
+      const d = sp.dark;
+      const sh = shade(sp.shirt, d), sk = shade(sp.skin, d), hr = shade(sp.hair, d), inn = shade(sp.inner, d);
+      sp.c = { sh, shD: shade(sh, 0.74), shL: shade(sh, 1.14), sk, skD: shade(sk, 0.8), hr, hrL: shade(hr, 1.35), inn, hat: sp.hat ? shade(sp.hat, d) : 0, hatD: sp.hat ? shade(sp.hat, d * 0.7) : 0 };
+    }
   }
 
   onPoint(strength = 1) { this.excite = Math.min(1, Math.max(this.excite, strength)); }
@@ -69,38 +75,91 @@ export class Crowd {
     const pb = this.pb; pb.clear(0);
     const ex = this.excite;
     for (let i = 0; i < this.spec.length; i++) {
-      const s = this.spec[i];
-      const k = s.k * s.sz; const dk = s.dark; const sh = dk < 1 ? shade(s.shirt, dk) : s.shirt, sk = dk < 1 ? shade(s.skin, dk) : s.skin, hr = dk < 1 ? shade(s.hair, dk) : s.hair;
-      const bw = Math.max(4, Math.round(0.42 * k)), bh = Math.max(3, Math.round(0.48 * k));
-      const hw = Math.max(3, Math.round(0.2 * k));
+      const s = this.spec[i], C = s.c;
+      const k = s.k * s.sz;
+      const bw = Math.max(4, Math.round(0.44 * k)), bh = Math.max(3, Math.round(0.5 * k));
+      const hw = Math.max(3, Math.round(0.21 * k));
+      const detail = bw >= 7;                     // enough pixels for shoulders/arms/hair styles
       let lift = 0;
-      const bob = Math.sin(time * s.sp * 2 + s.ph);
-      if (bob > 0.92) lift = 1;
+      if (Math.sin(time * s.sp * 2 + s.ph) > 0.92) lift = 1;
       const up = ex > s.thr ? (ex > s.thr + 0.25 || s.big ? 2 : 1) : 0;
       const cheering = up > 0 && ((Math.floor(time * 6 + s.ph) & 1) === 0 || up === 2);
       if (cheering) lift += Math.round(0.14 * k) * (up === 2 ? 1 : 0.6) | 0;
       const x0 = s.sx - (bw >> 1), yBot = s.sy - lift + 1, yTop = yBot - bh;
-      // torso with 2 tones
-      pb.rect(x0, yTop, bw, bh, sh);
-      pb.rect(x0, yBot - 2, bw, 2, shade(sh, 0.78));
-      pb.rect(x0 + bw - 1, yTop, 1, bh, shade(sh, 0.82));
-      // head
-      const hx = s.sx - (hw >> 1), hy = yTop - hw + 1;
-      pb.rect(hx, hy, hw, hw, sk);
-      pb.rect(hx, hy, hw, Math.max(1, (hw / 3) | 0), hr);
-      if (s.hat) pb.rect(hx - 0, hy, hw, 1, s.hat);
-      if (hw >= 4) pb.rect(hx, hy + 1, 1, 2, hr);
-      // arms up when cheering
+      // ---- torso: rounded shoulders, side shading, clothing variants
+      if (detail) {
+        pb.rect(x0 + 1, yTop, bw - 2, 1, C.sh);
+        pb.rect(x0, yTop + 1, bw, bh - 1, C.sh);
+        pb.rect(x0 + 1, yTop, Math.max(1, (bw >> 2)), 1, C.shL);          // lit shoulder
+        pb.rect(x0 + bw - 1, yTop + 1, 1, bh - 1, C.shD);
+        const cx0 = s.sx - 1;
+        switch (s.cloth) {
+          case 1: pb.rect(cx0, yTop, 2, bh, C.inn); pb.rect(cx0 - 1, yTop, 1, 2, C.inn); pb.rect(cx0 + 2, yTop, 1, 2, C.inn); break; // open jacket
+          case 2: pb.rect(x0, yTop + (bh >> 1), bw, Math.max(1, bh >> 3), C.inn); break;                           // stripe
+          case 3: pb.rect(cx0 - 1, yTop, 4, 1, C.inn); break;                                                       // collar
+          default: pb.rect(cx0, yTop, 2, 1, C.skD); break;                                                           // tee neckline
+        }
+        pb.rect(x0, yBot - 1, bw, 1, C.shD);
+        // arms resting at the sides (sleeve then hand)
+        if (!cheering) {
+          pb.rect(x0 - 1, yTop + 1, 1, bh - 2, C.shD);
+          pb.rect(x0 + bw, yTop + 1, 1, bh - 2, C.shD);
+          pb.rect(x0 - 1, yBot - 2, 1, 1, C.skD); pb.rect(x0 + bw, yBot - 2, 1, 1, C.skD);
+        }
+      } else {
+        pb.rect(x0, yTop, bw, bh, C.sh);
+        pb.rect(x0, yBot - 1, bw, 1, C.shD);
+        pb.rect(x0 + bw - 1, yTop, 1, bh, C.shD);
+      }
+      // ---- head: rounded when big enough, hair styles, caps, sunglasses
+      const hx = s.sx - (hw >> 1), hy = yTop - hw + (detail ? 0 : 1);
+      if (hw >= 5) {
+        pb.rect(hx + 1, hy, hw - 2, hw, C.sk); pb.rect(hx, hy + 1, hw, hw - 2, C.sk);
+        pb.rect(hx + hw - 1, hy + 1, 1, hw - 2, C.skD);
+        if (detail) pb.rect(s.sx - 1, hy + hw, 2, 1, C.skD);                // neck
+      } else {
+        pb.rect(hx, hy, hw, hw, C.sk);
+      }
+      const hrow = Math.max(1, (hw / 3) | 0);
+      if (s.hat) {
+        pb.rect(hx, hy - (hw >= 5 ? 1 : 0), hw, hrow + (hw >= 5 ? 1 : 0), C.hat);
+        pb.rect(hx - 1, hy + hrow - (hw >= 5 ? 0 : 1), hw + 2, 1, C.hatD);   // brim
+      } else {
+        switch (s.hairStyle) {
+          case 0: break;                                                       // bald / very short
+          case 1: case 2:                                                      // short
+            pb.rect(hx + (hw >= 5 ? 1 : 0), hy, hw - (hw >= 5 ? 2 : 0), hrow, C.hr);
+            if (hw >= 4) { pb.rect(hx, hy + 1, 1, hrow, C.hr); }
+            break;
+          case 3:                                                              // long hair framing the face
+            pb.rect(hx, hy, hw, hrow, C.hr);
+            pb.rect(hx - (hw >= 5 ? 1 : 0), hy + 1, 1, hw + 1, C.hr);
+            pb.rect(hx + hw - (hw >= 5 ? 0 : 1), hy + 1, 1, hw + 1, C.hr);
+            break;
+          case 4:                                                              // volume / curls
+            pb.rect(hx - 1, hy - 1, hw + 2, hrow + 1, C.hr);
+            if (hw >= 5) pb.set(hx + 1, hy - 1, C.hrL);
+            break;
+          default:                                                             // side parting
+            pb.rect(hx, hy, hw, hrow, C.hr); pb.set(hx + (hw >> 1), hy, C.hrL);
+        }
+      }
+      if (s.shades && hw >= 5) pb.rect(hx + 1, hy + (hw >> 1) - 1, hw - 2, 1, 0xff1a1a1a);
+      // ---- arms up when cheering
       if (cheering) {
-        pb.rect(x0 - 1, yTop - Math.round(0.3 * k), 1, Math.round(0.3 * k) + 1, sk);
-        pb.rect(x0 + bw, yTop - Math.round(0.3 * k) - ((s.ph * 7) & 1), 1, Math.round(0.3 * k) + 1, sk);
+        const al = Math.round(0.32 * k);
+        pb.rect(x0 - 1, yTop - al, detail ? 2 : 1, al + 2, C.sh);
+        pb.rect(x0 - 1, yTop - al, detail ? 2 : 1, 2, C.sk);
+        const wv = (s.ph * 7) & 1;
+        pb.rect(x0 + bw - (detail ? 1 : 0), yTop - al - wv, detail ? 2 : 1, al + 2, C.sh);
+        pb.rect(x0 + bw - (detail ? 1 : 0), yTop - al - wv, detail ? 2 : 1, 2, C.sk);
       }
     }
     // sporadic camera flashes
     const rnd = mulberry32(Math.floor(time * 6));
     for (let f = 0; f < 3; f++) {
       const s = this.spec[(rnd() * this.spec.length) | 0];
-      if (s && s.k < 22) { pb.rect(s.sx, s.sy - Math.round(s.k * 0.5), 2, 2, rgba(255, 255, 240)); }
+      if (s && s.k < 30) { const fx = s.sx, fy = s.sy - Math.round(s.k * 0.55); pb.rect(fx, fy, 2, 2, rgba(255, 255, 240)); pb.set(fx - 1, fy, rgba(255, 255, 200)); pb.set(fx + 2, fy + 1, rgba(255, 255, 200)); }
     }
     pb.flush();
   }

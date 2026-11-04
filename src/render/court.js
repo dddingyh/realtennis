@@ -29,27 +29,46 @@ const PAL = {
   },
 };
 let TH = THEMES.hard;
-const BTEX_W = Math.round(2 * XW * 16), BTEX_H = Math.round(BH * 16);
+// Back-wall texture is authored at the wall's on-screen pixel density so 1 texel == 1 screen pixel
+// (no dropped columns -> crisp lettering at any RENDER size).
+const TEXD = camera.project(0, 0, -ZB).scale;                                   // texels per metre (horizontal)
+const BTEX_W = Math.ceil(2 * XW * TEXD);
+const BTEX_H = Math.max(17, Math.round(camera.project(0, 0, -ZB).sy - camera.project(0, BH, -ZB).sy));
+const BIGWALL = BTEX_H >= 26;
 function makeBackWall(theme) {
   const pb = new PixBuf(BTEX_W, BTEX_H);
   const wall = hex(theme.wall), lite = hex(theme.wallLite), tx = hex(theme.text), led = hex(theme.led);
   pb.clear(wall);
-  const ledH = 10;
-  // cap + LED strip
-  pb.rect(0, 0, BTEX_W, ledH, hex('#0a0d14'));
+  const ledH = BIGWALL ? 11 : 9;
+  // LED ribbon: dark panel with dim pixel grid, warm digits, thin bezel
+  pb.rect(0, 0, BTEX_W, ledH, hex('#07090e'));
+  for (let y = 1; y < ledH - 1; y++) for (let x = (y & 1); x < BTEX_W; x += 2) pb.set(x, y, hex('#10141c'));
+  pb.rect(0, 0, BTEX_W, 1, hex('#2a3140'));
   pb.rect(0, ledH, BTEX_W, 1, lite);
-  const period = 96;
-  for (let x0 = 8; x0 < BTEX_W; x0 += period) drawPixText(pb, '187 KM/H', x0, 1, led, 1);
-  // skirt
+  if (BIGWALL) pb.rect(0, ledH + 1, BTEX_W, 1, shade(wall, 0.75));
+  const msgs = ['SERVE 187 KM/H', 'ACES 5', '1ST SERVE 64%', 'SERVE 187 KM/H'];
+  let x0 = 10, mi = 0;
+  const ty = Math.floor((ledH - 7) / 2);
+  while (x0 < BTEX_W) {
+    const m = msgs[mi++ % msgs.length];
+    drawPixText(pb, m, x0, ty, led, 1);
+    x0 += textWidth(m) + Math.round(TEXD * 2.4);
+  }
   pb.rect(0, BTEX_H - 2, BTEX_W, 2, shade(wall, 0.6));
   // brands: symmetric about centre, lots of empty wall
-  const pw = Math.round(PANEL * 16), c = BTEX_W / 2;
-  const order = [0, 1, 2, 1, 0];   // brand index by |slot|
-  for (let k = -2; k <= 2; k++) {
-    const brand = theme.brands[[0, 1, 2][Math.abs(k)] % theme.brands.length];
-    const cx = c + k * pw * 2;
-    const w = textWidth(brand, 1);
-    drawPixText(pb, brand, Math.round(cx - w / 2), ledH + 3, tx, 1);
+  const pw = PANEL * TEXD, c = BTEX_W / 2;
+  const font = BIGWALL ? 'big' : 'small';
+  const top = ledH + (BIGWALL ? 2 : 1), room = BTEX_H - 2 - top;
+  const fh = BIGWALL ? 14 : 7;
+  // three logos only (title partner centred, two partners mirrored) with generous empty wall between
+  // logos sit between the seated line judges (x = 0, +-7.3 m) so they are never hidden
+  for (const [xm, bi] of [[-3.65, 0], [3.65, 1]]) {
+    const brand = theme.brands[bi];
+    const cx = c + xm * TEXD;
+    const w = textWidth(brand, 1, font);
+    const yy = top + Math.floor((room - fh) / 2);
+    drawPixText(pb, brand, Math.round(cx - w / 2), yy, tx, 1, { font, shadow: shade(wall, 0.55) });
+    if (BIGWALL && yy + fh + 1 < BTEX_H - 2) pb.rect(Math.round(cx - w / 2), yy + fh + 1, Math.round(w * 0.3), 1, hex(theme.accent));
   }
   return { px: pb.px, w: BTEX_W, h: BTEX_H };
 }
@@ -258,7 +277,7 @@ function haze(c, t, x, y, amt = 0.15) {
 }
 
 function backWallColor(tex, bx, by, t, x, y) {
-  const tx = Math.min(tex.w - 1, Math.max(0, Math.floor((bx + XW) * 16)));
+  const tx = Math.min(tex.w - 1, Math.max(0, Math.floor((bx + XW) * TEXD)));
   const ty = Math.min(tex.h - 1, Math.max(0, Math.floor((BH - by) / BH * tex.h)));
   let c = tex.px[ty * tex.w + tx];
   c = shade(c, shadowMul(bx, -ZB, x, y));

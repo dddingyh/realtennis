@@ -7,6 +7,7 @@ import { STAGE, THEMES } from './stage.js';
 const W = camera.W, H = camera.H;
 const POST_X = COURT.doublesHalfWidth + 0.914; // 6.399
 const NET_TOP_C = COURT.netHeightCenter, NET_TOP_P = COURT.netHeightPost;
+const NET_ROW = camera.project(0, 0.5, 0).sy;   // screen row through the net plane (mid height)
 
 export function netTopAt(x) {
   const ax = Math.abs(x);
@@ -26,7 +27,7 @@ export function renderNetLayer(surface = 'hard') {
   // mesh
   for (let sx = x0; sx <= x1; sx++) {
     // world x for this column (net plane z=0)
-    const d = camera.rayDir(sx + 0.5, 200);
+    const d = camera.rayDir(sx + 0.5, NET_ROW);
     const t = -camera.pos.z / d.z;
     const wx = t * d.x;
     if (Math.abs(wx) > POST_X) continue;
@@ -155,6 +156,7 @@ function person(pb, wx, wz, opts) {
     pb.rect(x - (hs >> 1), sy0 - m(0.55) - hs, hs, hs, sk);
     pb.rect(x - (hs >> 1), sy0 - m(0.55) - hs, hs, Math.max(1, hs >> 2), hr);
     if (hat) pb.rect(x - (hs >> 1) - 1, sy0 - m(0.55) - hs, hs + 2, 1, hex(hat));
+    if (k >= 26) personDetail(pb, x, sy0 - m(0.55), hs, m, sh, sk, hat, y, true);
   } else {
     const kneel = crouch ? 0.45 : 0;
     const top = y - m(1.0 - kneel);
@@ -168,7 +170,22 @@ function person(pb, wx, wz, opts) {
     pb.rect(x - (hs >> 1), top - hs, hs, hs, sk);
     pb.rect(x - (hs >> 1), top - hs, hs, Math.max(1, hs >> 2), hr);
     if (hat) pb.rect(x - (hs >> 1) - 1, top - hs, hs + 2, 1, hex(hat));
+    if (k >= 26) personDetail(pb, x, top, hs, m, sh, sk, hat, y, false);
   }
+}
+
+// extra pixels when the figure is large enough (540p+): collar, sleeves, belt, shoes, face shading, cap brim
+function personDetail(pb, x, torsoTop, hs, m, sh, sk, hat, footY, seated) {
+  const dark = shade(sh, 0.62);
+  pb.rect(x - 1, torsoTop, 3, 1, dark); pb.set(x, torsoTop + 1, dark);                 // collar V
+  pb.rect(x - m(0.2) - (seated ? m(0.07) : 0), torsoTop + 1, m(0.08), m(0.12), sh);     // sleeves
+  pb.rect(x + m(0.19) - (seated ? 0 : 1), torsoTop + 1, m(0.08), m(0.12), shade(sh, 0.85));
+  if (!seated) pb.rect(x - m(0.15), torsoTop + m(0.38), m(0.31), 1, hex('#20242e'));      // belt
+  pb.rect(x - m(0.17), footY - 1, m(0.14), 2, hex('#2a2f3a')); pb.rect(x + m(0.03), footY - 1, m(0.14), 2, hex('#2a2f3a')); // shoes
+  const hx = x - (hs >> 1), hy = torsoTop - hs;
+  pb.rect(hx + hs - 1, hy + 1, 1, hs - 1, shade(sk, 0.8));                              // face shading
+  pb.set(hx, hy + hs - 1, shade(sk, 0.9));
+  if (hat) { pb.rect(hx - 2, hy + 1, hs + 4, 1, shade(hex(hat), 0.82)); }                 // brim
 }
 
 function box(pb, x, y, z, w, h, d, c) {
@@ -193,6 +210,20 @@ function bench(pb, x, z, TH) {
   const tb = bx + m(1.75);
   pb.rect(tb, by - m(0.5), m(0.45), m(0.5), shade(wall, 0.8)); pb.rect(tb, by - m(0.5), m(0.45), 1, hex(TH.wallLite));
   pb.rect(tb + 1, by - m(0.62), m(0.45) - 2, m(0.12), hex('#f2f2ea'));
+  if (k >= 30) {
+    // folded towel draped over the bench back + two water bottles + racket bag under the seat
+    pb.rect(bx + m(0.2), by - m(0.95), m(0.28), m(0.42), hex('#f2f2ea'));
+    pb.rect(bx + m(0.2), by - m(0.95), 1, m(0.42), hex('#c9ccd2'));
+    pb.rect(bx + m(0.2) + m(0.28) - 1, by - m(0.95), 1, m(0.42), hex('#d9dce2'));
+    for (const ox of [0.95, 1.12]) {
+      const xx = bx + m(ox);
+      pb.rect(xx, by - m(0.45) - m(0.24), Math.max(2, m(0.07)), m(0.24), hex('#cfe6f5'));
+      pb.rect(xx, by - m(0.45) - m(0.24), Math.max(2, m(0.07)), 1, hex(TH.wallLite));
+    }
+    pb.rect(bx + m(0.15), by - m(0.28), m(0.9), m(0.22), hex('#1b1e26'));
+    pb.rect(bx + m(0.15), by - m(0.28), m(0.9), 1, hex('#3a404e'));
+    pb.rect(bx + m(0.5), by - m(0.24), m(0.25), 1, hex(TH.accent));
+  }
 }
 export function drawStaticPeople(pb, surface = 'hard') {
   const TH = THEMES[surface] || THEMES.hard;

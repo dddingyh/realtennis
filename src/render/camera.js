@@ -1,4 +1,4 @@
-// Pinhole perspective camera, world metres -> 640x360 screen pixels.
+// Pinhole perspective camera, world metres -> RENDER.width x RENDER.height screen pixels.
 // World: x right, y up, z toward camera (net at z=0, near baseline z=+11.885).
 import { RENDER } from '../config.js';
 

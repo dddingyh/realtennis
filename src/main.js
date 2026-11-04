@@ -12,6 +12,7 @@ const params = new URLSearchParams(location.search);
 const STEP = 1 / PHYSICS.simHz;
 
 const screen = $('screen');
+screen.width = RENDER.width; screen.height = RENDER.height;
 const sctx = screen.getContext('2d');
 sctx.imageSmoothingEnabled = false;
 
@@ -123,6 +124,20 @@ window.addEventListener('blur', () => { if (mode === 'playing' && !paused) toggl
 // audio unlock on first gesture
 for (const ev of ['pointerdown', 'keydown', 'touchstart']) window.addEventListener(ev, () => sfx.unlock(), { once: false, passive: true });
 
+// ---------------------------------------------------------------- perf
+const PERF = { n: 0, sum: 0, max: 0, samples: [], dts: [] };
+function perfRec(ms, dt) {
+  PERF.n++; PERF.sum += ms; PERF.max = Math.max(PERF.max, ms);
+  PERF.samples.push(ms); if (PERF.samples.length > 600) PERF.samples.shift();
+  PERF.dts.push(dt * 1000); if (PERF.dts.length > 600) PERF.dts.shift();
+}
+function perfReport() {
+  const a = [...PERF.samples].sort((x, y) => x - y), d = PERF.dts;
+  const pct = (q) => a.length ? a[Math.min(a.length - 1, Math.floor(q * a.length))] : 0;
+  return { frames: PERF.n, renderAvgMs: +(PERF.sum / Math.max(1, PERF.n)).toFixed(2), renderP50: +pct(0.5).toFixed(2), renderP95: +pct(0.95).toFixed(2), renderMax: +PERF.max.toFixed(2),
+    fps: d.length ? +(1000 / (d.reduce((x, y) => x + y, 0) / d.length)).toFixed(1) : 0 };
+}
+
 // ---------------------------------------------------------------- frame loop
 function processEvents(events, state) {
   if (!events.length) return;
@@ -166,9 +181,11 @@ function frame(now) {
     state = attract.state; time = state.time;
   }
   if (state) {
+    const t0 = performance.now();
     const canvas = renderer.draw(state, paused ? 0 : dt, time);
     if (mode !== 'menu') hud.draw(renderer.ctx, state, paused ? 0 : dt, ui);
     sctx.drawImage(canvas, 0, 0);
+    perfRec(performance.now() - t0, dt);
   }
 }
 
@@ -188,7 +205,7 @@ async function boot() {
   try { const S = StubClass || (await import('./ui/dev_stub_sim.js')).Simulation; attract = new S({ surface: renderer.surface }); } catch (e) { attract = null; }
   prog(1);
   $('loading').classList.add('hidden');
-  window.__rt = { screensUI, renderer, hud, sfx, phone, get sim() { return sim; }, set sim(v) { sim = v; }, startGame, toMenu, togglePause, usedStub: () => usedStub, get mode() { return mode; }, get attract() { return attract; } };
+  window.__rt = { perf: perfReport, perfReset: () => { PERF.n = 0; PERF.sum = 0; PERF.max = 0; PERF.samples.length = 0; PERF.dts.length = 0; }, screensUI, renderer, hud, sfx, phone, get sim() { return sim; }, set sim(v) { sim = v; }, startGame, toMenu, togglePause, usedStub: () => usedStub, get mode() { return mode; }, get attract() { return attract; } };
   mode = 'menu'; document.body.dataset.mode = 'menu';
   last = performance.now();
   requestAnimationFrame(frame);

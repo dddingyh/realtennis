@@ -48,8 +48,8 @@ export const SURFACES = Object.freeze({
 });
 
 export const RENDER = Object.freeze({
-  width: 640,                 // internal pixel-art resolution
-  height: 360,
+  width: 960,                 // internal pixel-art resolution (2x integer upscale -> 1920x1080)
+  height: 540,
 });
 
 export const SHOT_TYPES = Object.freeze(['flat', 'topspin', 'slice', 'lob']);
