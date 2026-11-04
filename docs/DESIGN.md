@@ -295,3 +295,39 @@ Host → phone:
 `class RemoteInput { constructor(sim, playerIndex, host); handle(msg); notify(events, state); }` —
 maps `tilt`→`sim.setMove`, `swing`→`sim.swing({...,source:'remote', ageMs})`, `btn serve`→ serve swing,
 emits `haptic`/`state` to phone from sim events. Applies user timing offset setting.
+
+---
+
+## 6. v3 contracts (movement realism + analog phone swings)
+
+### 6.1 Movement animation state (SIM writes, CHAR renders)
+`players[i].anim` gains these fields (existing fields keep their meaning):
+```
+name:  'ready' | 'split' | 'run' | 'shuffle' | 'crossover' | 'backpedal' | 'brake' | 'walk' | 'swing' | 'serve' | 'bounce' | ...
+gait:  0..1   // locomotion cycle phase, advanced by DISTANCE travelled: gait += dist / strideLen (one cycle = two steps).
+              // Feet must not slide: pose plants the stance foot while gait advances.
+strideLen: m  // ground distance per full cycle at the current speed (SIM chooses; e.g. run ≈ 1.6–2.6 m, shuffle ≈ 0.9 m)
+dir:   {x,z}  // travel direction (unit, world)
+face:  {x,z}  // body facing (unit, world) — shuffle/backpedal keep facing the net while moving sideways/backwards
+speed: 0..1   // normalized ground speed
+accel: -1..1  // signed acceleration along dir (lean forward when accelerating, lean back / wide base when braking)
+```
+Semantics: `shuffle` = side steps facing the net (short adjustments ≤ ~2.5 m, recovery); `crossover` = first step(s) of a long
+lateral move; `run` = sprint; `backpedal` = moving back while facing the net; `brake` = deceleration / plant before a shot
+(wide base, low centre of mass); `split` = split-step hop timed with the opponent's contact.
+
+### 6.2 Analog swing (CTL produces, SIM consumes)
+Phone → host `swing` message adds (all optional; old fields unchanged):
+```
+aimX:   -1..1   // horizontal direction of the racket face / hand path at contact, relative to the forward heading
+                // captured just before the swing (ready pose). -1 = to the player's left, +1 = right.
+lift:   0..1    // swing-path elevation (0 = level/through, 1 = steep low-to-high)  → height/arc, lob tendency
+spin:   -1..1   // continuous spin intent: -1 heavy backspin (slice), 0 flat, +1 heavy topspin (from path + face + wrist roll)
+exec:   0..1    // execution quality from the motion itself: face stability at contact, smooth acceleration (no jerk),
+                // follow-through completeness, peak not truncated. 1 = clean stroke.
+speedDps: deg/s // peak angular speed (power is still sent, normalized)
+```
+`RemoteInput` forwards them to `sim.swing(i, { shot, side, power, aimX, aimDepth: null, spin, lift, exec, ageMs, source:'remote' })`.
+SIM must make these produce clearly different, physically consistent shots: power → pace; spin → rpm & arc; lift → net
+clearance/depth (high lift + low pace ⇒ lob); aimX blended with timing for direction; exec × timing × body position ⇒ contact
+quality ⇒ error scatter (mishits: frame shots, short floaters, shanks on very poor quality). Keyboard (no analog fields) keeps working.
