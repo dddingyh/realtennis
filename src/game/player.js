@@ -30,6 +30,13 @@ export const PLAYER = {
   boundsBack: COURT.halfLength + 5.2,
 };
 
+/** Archetype tunables (DESIGN §7.2): 'lanky' longer reach, 'elastic' longer lunge/slide and stronger braking. */
+export const ARCHETYPES = {
+  classic: { reachMul: 1.0, lungeMul: 1.0, brakeMul: 1.0, speedMul: 1.0 },
+  lanky: { reachMul: 1.05, lungeMul: 1.0, brakeMul: 0.95, speedMul: 0.99 },
+  elastic: { reachMul: 1.0, lungeMul: 1.3, brakeMul: 1.12, speedMul: 1.0 },
+};
+
 const PALETTES = [
   { skin: '#e8b48a', hair: '#2b1a10', shirt: '#f2f2f2', shorts: '#1c2a52', shoes: '#f5f5f5', headband: null },
   { skin: '#c68a5e', hair: '#111111', shirt: '#e63946', shorts: '#222222', shoes: '#dddddd', headband: '#ffffff' },
@@ -58,6 +65,8 @@ export class Player {
     this.autoMove = o.autoMove || 'off';
     this.name = o.name;
     this.look = o.look;
+    const A = ARCHETYPES[(o.look && o.look.archetype) || 'classic'] || ARCHETYPES.classic;
+    this.reachMul = A.reachMul; this.lungeMul = A.lungeMul; this.brakeMul = A.brakeMul; this.archSpeed = A.speedMul;
     this.pos = { x: 0, z: this.facing * (COURT.halfLength + 1) };
     this.vel = { x: 0, z: 0 };
     this.intent = { x: 0, z: 0 };               // final move intent used by kinematics, [-1,1]
@@ -90,7 +99,7 @@ export class Player {
 
   maxSpeed() {
     const st = PLAYER.staminaFloorSpeed + (1 - PLAYER.staminaFloorSpeed) * this.stamina;
-    let m = PLAYER.maxSpeed * st * this.speedMul;
+    let m = PLAYER.maxSpeed * st * this.speedMul * (this.archSpeed || 1);
     if (this.prepared) m *= PLAYER.prepSpeedMul;
     if (this.swingT >= 0 && this.swingT < PLAYER.swingDur) m *= PLAYER.swingSpeedMul;
     if (this.splitT > 0) m *= 0.25;
@@ -223,7 +232,7 @@ export class Player {
         a = PLAYER.accel0 * Math.max(0, 1 - sp0 / (PLAYER.maxSpeed * 1.02)) + PLAYER.accelMin;
         if (this.boostT > 0 && this.splitT <= 0) a *= PLAYER.splitBoost;
         a *= stam;
-      } else a = PLAYER.brake;
+      } else a = PLAYER.brake * (this.brakeMul || 1);
       const maxDv = a * dt;
       const sc = dvm <= maxDv ? 1 : maxDv / dvm;
       this.vel.x += dvx * sc; this.vel.z += dvz * sc;

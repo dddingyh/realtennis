@@ -54,13 +54,13 @@ export function contactGeometry(h, ball) {
   if (vf < -0.5) tEarly = (fwd - IDEAL_F) / -vf;
   else tEarly = fwd - IDEAL_F > 0 ? Infinity : (fwd - IDEAL_F) / Math.max(3, Math.abs(vf));
   const speed = h.vel ? Math.hypot(h.vel.x, h.vel.z) : 0;
-  return { lat, latAbs: Math.abs(lat), fwd, y: ball.pos.y, vf, tEarly, side: lat >= 0 ? 'fh' : 'bh', handX, speed };
+  return { lat, latAbs: Math.abs(lat), fwd, y: ball.pos.y, vf, tEarly, side: lat >= 0 ? 'fh' : 'bh', handX, speed, reachMul: h.reachMul || 1, lungeMul: h.lungeMul || 1 };
 }
 
 /** Can the racket physically reach the ball right now? */
 export function isReachable(geo, source = 'keyboard', hitter) {
   const rem = source === 'remote';
-  const reach = REACH[geo.side] + (rem ? 0.2 : 0) + LUNGE * clamp((geo.speed || 0) / 6, 0, 1);   // running players lunge farther
+  const reach = REACH[geo.side] * (geo.reachMul || 1) + (rem ? 0.2 : 0) + LUNGE * (geo.lungeMul || 1) * clamp((geo.speed || 0) / 6, 0, 1);   // running players lunge farther
   const fwdMin = rem ? -1.3 : -0.9;
   const fwdMax = IDEAL_F + (rem ? 1.15 : 0.85);
   return geo.latAbs <= reach && geo.fwd >= fwdMin && geo.fwd <= fwdMax && geo.y >= 0.08 && geo.y <= SMASH_REACH_Y;
@@ -82,7 +82,7 @@ export function classifyContact(h, ball, side = null, o = {}) {
   const geo = contactGeometry(h, { pos: ball.pos, vel: ball.vel || { x: 0, y: 0, z: 0 } });
   const sd = side === 'fh' || side === 'bh' ? side : geo.side;
   const lat = sd === 'fh' ? geo.lat : -geo.lat;
-  const maxR = REACH[sd] + LUNGE;
+  const maxR = REACH[sd] * (h.reachMul || 1) + LUNGE * (h.lungeMul || 1);
   const reachT = clamp((lat - 1.0) / (maxR - 1.0), 0, 1);
   const speed = h.vel ? Math.hypot(h.vel.x, h.vel.z) : 0;
   const behind = Math.abs(h.pos.z) - COURT.halfLength;
@@ -269,7 +269,7 @@ export function computeHit(inp) {
   const tau = TAU[source] * (1 - 0.15 * inside) * (kind === 'volley' ? 0.9 : 1);
   const fTiming = 1 / (1 + (early / tau) ** 2);
   const fHeight = heightFactor(y, P.band, P.penHigh);
-  const maxR = REACH[geo.side] + LUNGE;
+  const maxR = REACH[geo.side] * (hitter.reachMul || 1) + LUNGE * (hitter.lungeMul || 1);
   let fReach = 1;
   if (geo.latAbs < 0.65) fReach = 1 - 0.5 * (0.65 - geo.latAbs) / 0.65;            // jammed
   else if (geo.latAbs > 1.0) fReach = 1 - 0.55 * clamp((geo.latAbs - 1.0) / (maxR - 1.0), 0, 1.3);   // stretched
@@ -381,7 +381,7 @@ export function computeHit(inp) {
     const risk = (swing.risk ?? 1) * (kind === 'volley' ? 1.1 : 1) * vRisk;
     const sd = noiseSd(q, risk, power, GROUND_NOISE_FLOOR, GROUND_NOISE_K);
     // a low ball needs lift: a flat path from below the net line drags the ball down
-    const lowBias = lowF * clamp(0.45 - lift, 0, 0.45) * (spinI > 0.3 ? 1.5 : spinI < -0.3 ? 0.3 : 1) * 4.5 * D2R;
+    const lowBias = lowF * clamp(0.45 - lift, 0, 0.45) * (spinI > 0.3 ? 1.5 : spinI < -0.3 ? 0.3 : 1) * 3.0 * D2R;
     const pt = perturb(vel, spin, sd, rng, false, -lowBias);
     vel = pt.vel; spin = pt.spin;
     const qm = q - (V === 'jammed' ? 0.15 : 0) - (V === 'stretch' ? 0.08 * stretch : 0);

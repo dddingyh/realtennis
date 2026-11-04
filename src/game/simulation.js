@@ -61,8 +61,9 @@ export class Simulation {
     const aiPlayers = opts.aiPlayers || [false, true];
     const names = opts.playerNames || ['你', 'AI'];
     const autoMove = opts.autoMove || ['assist', 'off'];
-    const look0 = pickLook(this.rng);
-    const look1 = pickLook(this.rng, look0);
+    // looks (incl. look.archetype, §7.2) may be passed in; otherwise generated
+    const look0 = opts.looks && opts.looks[0] ? { ...opts.looks[0] } : pickLook(this.rng);
+    const look1 = opts.looks && opts.looks[1] ? { ...opts.looks[1] } : pickLook(this.rng, look0);
     this.players = [0, 1].map((i) => new Player(i, {
       name: names[i] || (i ? 'AI' : '你'),
       hand: i === 0 && !aiPlayers[0] ? (opts.humanHand || 'R') : (this.rng.chance(0.12) ? 'L' : 'R'),
@@ -788,9 +789,11 @@ export class Simulation {
       const pl = this.players[i];
       if (!pl.prepared || pl.swingT >= 0) continue;
       const plan = this.ais[i] ? this.ais[i].plan : (this._plan(i) || {}).plan;
-      const b = plan ? { pos: plan.ball } : (this.ball.inPlay ? this.ball : null);
+      const b = plan ? { pos: plan.ball, vel: this.ball.vel } : (this.ball.inPlay ? this.ball : null);
       if (!b) continue;
-      pl.contactInfo = classifyContact(pl, b, pl.prepared.side || (plan && plan.side) || null);
+      const pend = this.ais[i] && this.ais[i].pending;
+      pl.contactInfo = classifyContact(pl, b, pl.prepared.side || (plan && plan.side) || null,
+        { defensive: !!(pend && pend.defensive), kind: plan && plan.bounces === 0 ? 'volley' : 'ground' });
     }
   }
 

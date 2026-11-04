@@ -392,6 +392,18 @@ CHAR uses IK so the racket's sweet spot meets `contact` at phase 0.5, and adapts
 (stretch: open-stance lunge / slide, arm fully extended; jammed: elbow tucked, short swing, step away; run: hitting on the move;
 high: shoulder-height take-back; low: deep knee bend; defensive: blocked/sliced reply).
 
+SIM notes (§7.1): `classifyContact(h, ball, side, {defensive, kind})` in `src/game/shot.js` (exported, also used for the
+planned contact). Priority: `stretch` (reachT > 0.45) > `jammed` (lat < 0.40 m or fwd < −0.35 m) > `defensive` (AI defensive
+choice, or ≥ 2 m behind the baseline vs a > 28 m/s ball) > `run` (player speed > 3 m/s) > `high` (h > 1.45 m) > `low`
+(h < 0.45 m) > `normal`. reachT = (lat − 1.0)/(maxReach − 1.0), maxReach = 1.45 fh / 1.30 bh (+0.4 m lunge). While a backswing
+is held (keyboard `prepare`, AI backswing ~0.35 s before contact) anim.contact/variant/reachT describe the PLANNED contact (from the
+interception plan, relative to the player's current position); from the hit on they are the actual contact. `hit` events and
+`state.lastShot` also carry `variant`, `contact`, `reachT`.
+Outcome effects: stretch → pace ×(1 − 0.35·s), less topspin, aim pulled to the middle, more scatter/mishits; jammed → pace ×0.72,
+mishit (frame) risk; run → scatter ×1.35, pace ×0.88 only when retreating; high (at/behind the baseline, top/flat) → up to −22 %
+pace and −30 % topspin, none if the player stepped inside the baseline; low → a low swing path (lift < 0.45) drags the ball into
+the net (topspin worst, slice nearly unaffected); defensive → pace ×0.85, safer margins.
+
 ### 7.2 Player archetypes (`look.archetype`, CHAR defines, VIS exposes in menu, SIM passes through)
 `'elastic'` — lean, very flexible all-court defender: wide low stance, splits/slides, compact flat-ish forehand, signature two-handed backhand with full extension.
 `'lanky'` — tall, long-limbed aggressive baseliner: upright posture, long levers, early take-back, flat penetrating strokes, open stance.
@@ -399,6 +411,26 @@ high: shoulder-height take-back; low: deep knee bend; defensive: blocked/sliced 
 (Inspired by the playing styles of top professionals; **no real names, likenesses-by-name, logos or brand marks in the game**.)
 `look.archetype` also scales SIM tunables slightly (e.g. reach +5 % for 'lanky', slide-recovery for 'elastic').
 
+SIM notes (§7.2): `new Simulation({ looks:[look0, look1] })` uses the given looks (incl. `archetype`); tunables in
+`src/game/player.js` `ARCHETYPES`: lanky reach ×1.05 (speed ×0.99), elastic lunge ×1.3 and braking ×1.12.
+
 ### 7.3 Game speed
 `new Simulation({ timeScale })`, default **0.85**, menu option 0.7–1.0. `sim.step(realDt)` advances sim time by `realDt × timeScale`.
 Displayed speeds stay real-world (km/h unchanged). Remote `ageMs` (real time) is converted to sim time inside SIM.
+
+SIM notes (§7.3): `sim.timeScale` / `sim.setTimeScale(v)` (clamped 0.5–1.0), mirrored in `state.timeScale`. Everything inside
+the simulation (physics, timers, AI reaction, auto-move reaction, serve choreography, swing timing windows) runs in sim time,
+so the whole world is uniformly slower; real-time inputs are converted: remote `ageMs` × timeScale; keyboard hold-time power
+uses the real clock. Displayed km/h are physical (unchanged).
+
+### 7.4 Competitiveness (SIM)
+- `autoMove: 'assist'` reacts 0.25 s (sim) after the opponent's contact and moves the player on its own at most 1.2 m
+  (`ASSIST` in simulation.js) with calm footwork; wide / short balls need the player's own steering (keyboard or tilt), which
+  overrides while held. `'full'` (easy mode) reacts in 0.15 s and goes all the way.
+- AI point construction: open-court targeting (predicts where the opponent recovers), side-to-side patterns per style,
+  attacks short or weak (slow, sitting-up) replies, approaches, drop shots when the opponent is deep, lob/pass vs net players,
+  exploits the weaker side, and resets with high deep balls or slices when stretched (`defensive`).
+- Difficulty: menu level → `effectiveLevel()` (ai.js), calibrated with the human-like bot of `tests/sim_compete.mjs`
+  (250 ms reaction, ±60 ms timing, assist + imperfect steering, noisy analog swings, exec ~ N(0.8, 0.15)): the bot wins
+  ~66 % of points at 0.2, ~50 % at 0.5, ~32 % at 0.8, ~19 % at 1.0.
+

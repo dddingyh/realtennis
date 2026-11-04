@@ -134,7 +134,8 @@ console.log('auto-move');
     b.inPlay = true; b.lastHitBy = 1; b.bounces = 0; b.rolling = false; b.visible = true;
     return sim;
   };
-  for (const mode of ['full', 'assist']) {
+  const lat = {};
+  for (const mode of ['full', 'assist', 'off']) {
     const sim = scenario(mode);
     let reachableAt = null;
     for (let i = 0; i < 120 * 3 && !reachableAt; i++) {
@@ -142,7 +143,22 @@ console.log('auto-move');
       const g = contactGeometry(sim.players[0], sim.ball);
       if (sim.ball.bounces >= 1 && g.fwd < 1.6 && g.fwd > -0.5 && g.tEarly < 0.01) reachableAt = g;
     }
-    check(`${mode}: player moves to the predicted contact point without any input`, reachableAt && reachableAt.latAbs < 1.4, reachableAt && `lateral distance at contact ${f(reachableAt.latAbs)} m`);
+    lat[mode] = reachableAt ? reachableAt.latAbs : 99;
+  }
+  check("full: player moves to the predicted contact point without any input", lat.full < 1.4, `lateral distance at contact ${f(lat.full)} m`);
+  check("assist: covers part of a wide ball on its own (needs steering for the rest)", lat.assist < lat.off - 0.8 && lat.assist > lat.full + 0.3, `full ${f(lat.full)} / assist ${f(lat.assist)} / off ${f(lat.off)} m`);
+  {
+    // with steering toward the ball the assist player gets there
+    const sim = scenario('assist');
+    let g = null;
+    for (let i = 0; i < 120 * 3 && !g; i++) {
+      const p = sim.players[0];
+      sim.setMove(0, sim.ball.pos.x - 0.8 > p.pos.x + 0.4 ? 1 : 0, 0);
+      sim.step(1 / 120);
+      const q = contactGeometry(p, sim.ball);
+      if (sim.ball.bounces >= 1 && q.fwd < 1.6 && q.fwd > -0.5 && q.tEarly < 0.01) g = q;
+    }
+    check('assist + steering reaches the wide ball', g && g.latAbs < 1.45, g && `lateral ${f(g.latAbs)} m`);
   }
   const off = scenario('off'); run(off, 0.45);
   check('off: player does not move by itself', Math.abs(off.players[0].pos.x) < 0.01);

@@ -84,6 +84,16 @@ console.log('contact classification (§7.1)');
   check('far player: local frame mirrored (fwd > 0 toward the net)', fc.side === 'fh' && fc.contact.fwd > 0.3, `fwd ${f(fc.contact.fwd)}`);
 }
 
+{
+  // archetypes (§7.2) scale reach / lunge
+  const mk = (arch) => new Simulation({ seed: 1, looks: [{ skin: '#e0a97c', hair: '#222', shirt: '#fff', shorts: '#000', shoes: '#fff', headband: null, archetype: arch }, null] }).players[0];
+  const lk = mk('lanky'), cl = mk('classic'), el = mk('elastic');
+  const b = { pos: { x: 1.5, y: 1.0, z: 11.9 }, vel: { x: 0, y: 0, z: 20 } };
+  const geoL = contactGeometry({ ...lk, pos: { x: 0, z: 12.4 }, vel: { x: 0, z: 0 } }, b), geoC = contactGeometry({ ...cl, pos: { x: 0, z: 12.4 }, vel: { x: 0, z: 0 } }, b);
+  check("look.archetype passes through and 'lanky' reaches ~5 % farther", lk.look.archetype === 'lanky' && lk.reachMul > cl.reachMul && geoL.reachMul === 1.05 && geoC.reachMul === 1);
+  check("'elastic' lunges/slides farther and brakes harder", el.lungeMul > cl.lungeMul && el.brakeMul > cl.brakeMul);
+}
+
 console.log('outcome follows the variant');
 {
   const H = (o = {}) => ({ pos: { x: 0, z: 12.4 }, vel: { x: 0, z: 0 }, facing: 1, hand: 'R', stamina: 1, ...o });
@@ -123,11 +133,11 @@ console.log('outcome follows the variant');
 
 console.log('animation contract');
 {
-  const sim = new Simulation({ aiPlayers: [true, true], aiStyles: ['grinder', 'aggressive'], seed: 21, timing: T, format: { sets: 1, gamesPerSet: 2, tiebreak: true } });
+  const sim = new Simulation({ aiPlayers: [true, true], aiStyles: ['grinder', 'aggressive'], seed: 21, timing: T, format: { sets: 1, gamesPerSet: 4, tiebreak: true } });
   let planned = 0, plannedWithContact = 0, hits = 0, hitsWithContact = 0, agree = 0, compare = 0;
   const lastPlanned = [null, null];
   const variants = {};
-  for (let n = 0; n < 120 * 600 && sim.state.match.phase !== 'match-over'; n++) {
+  for (let n = 0; n < 120 * 1500 && sim.state.match.phase !== 'match-over'; n++) {
     sim.step(1 / 120);
     for (let i = 0; i < 2; i++) {
       const a = sim.players[i].anim;
