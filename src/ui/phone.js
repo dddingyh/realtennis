@@ -10,14 +10,11 @@ export class PhoneLink {
   get roomCode() { return this.host?.roomCode || ''; }
   get url() { return this.host?.controllerUrl || ''; }
 
+  // Host states (src/net/host.js): starting | waiting | pairing | connected | stale | error
   static normalize(s) {
-    if (s == null) return 'waiting';
-    if (typeof s === 'object') s = s.state || s.status || s.type || (s.connected ? 'connected' : 'waiting');
-    s = String(s).toLowerCase();
-    if (/disconnect|closed|lost|error|fail/.test(s)) return 'lost';
-    if (/connecting|waiting|reconnect|signal|listen|open-wait/.test(s)) return 'connecting';
-    if (/connected|open|ready|online|paired|hello|welcome/.test(s)) return 'connected';
-    return 'waiting';
+    if (s == null) return 'connecting';
+    const st = typeof s === 'object' ? (s.state || (s.connected ? 'connected' : 'starting')) : String(s);
+    return { starting: 'connecting', waiting: 'waiting', pairing: 'pairing', connected: 'connected', stale: 'lost', error: 'lost', closed: 'lost' }[st] || 'connecting';
   }
 
   async start() {
@@ -33,6 +30,7 @@ export class PhoneLink {
           onMessage: (msg) => { try { this.remote?.handle?.(msg); } catch (e) { console.warn('remote.handle', e); } },
           onStatus: (st) => {
             const n = PhoneLink.normalize(st);
+            this.message = (st && typeof st === 'object' && st.message) || '';
             this.status = n; this.connected = n === 'connected'; this._emit();
           },
         });

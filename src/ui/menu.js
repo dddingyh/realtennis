@@ -92,7 +92,9 @@ export function createMenu({ phone, getKeyboardHelp, onStart }) {
     $('phone-url').textContent = phone?.url || '';
     const stEl = $('phone-status');
     stEl.className = 'status ' + (st === 'connected' ? 'connected' : st === 'lost' || st === 'unavailable' ? 'lost' : 'waiting');
-    stEl.querySelector('span').textContent = st === 'connected' ? '手机已连接' : st === 'lost' ? '连接已断开，等待重连…' : st === 'unavailable' ? '手机连接不可用（请用键盘）' : st === 'connecting' ? '正在连接信令服务…' : '等待手机扫码连接…';
+    stEl.style.whiteSpace = 'pre-line';
+    const base = st === 'connected' ? '手机已连接' : st === 'lost' ? '连接异常，自动重试中…' : st === 'unavailable' ? '手机连接不可用（请用键盘）' : st === 'connecting' ? '正在连接信令服务器…' : st === 'pairing' ? '发现手机，正在建立连接…' : '已就绪，等待手机扫码并点“开始”';
+    stEl.querySelector('span').textContent = phone?.message && st !== 'connected' ? base + '\n' + phone.message : base;
     const qr = $('qr'), fb = $('qr-fallback');
     let ok = false;
     if (phone?.url && phone.drawQR) {

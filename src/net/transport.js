@@ -23,6 +23,30 @@ export const loadPeerJs = () => loadScript(new URL('../../vendor/peerjs.min.js',
 export const loadQrCode = () => loadScript(new URL('../../vendor/qrcode.js', import.meta.url).href, 'qrcode');
 
 export const peerIdFor = (room) => PEER_ID_PREFIX + room;
+
+// ICE servers. PeerJS's default list only has Google STUN, which is unreachable from mainland China;
+// without a reachable STUN server the peers can only use mDNS host candidates, which many routers block.
+// Order: STUN servers reachable in mainland China first, then global ones, then the PeerJS public TURN relay.
+export const ICE_SERVERS = [
+  { urls: 'stun:stun.miwifi.com:3478' },
+  { urls: 'stun:stun.chat.bilibili.com:3478' },
+  { urls: 'stun:stun.cloudflare.com:3478' },
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' },
+];
+const peerOpts = (extra = {}) => ({ debug: 1, ...extra, config: { iceServers: ICE_SERVERS, ...(extra.config || {}) } });
+const ICE_CN = { new: '准备中', checking: '正在打洞', connected: '已连通', completed: '已连通', disconnected: '中断', failed: '失败', closed: '已关闭' };
+// Watch a DataConnection's ICE state (peerConnection is created lazily, so poll for it briefly).
+function watchIce(conn, cb) {
+  let tries = 0;
+  const attach = () => {
+    const pc = conn.peerConnection;
+    if (!pc) { if (++tries < 40) setTimeout(attach, 100); return; }
+    const report = () => cb(pc.iceConnectionState, ICE_CN[pc.iceConnectionState] || pc.iceConnectionState);
+    pc.addEventListener('iceconnectionstatechange', report); report();
+  };
+  attach();
+}
 const uid = () => Math.random().toString(36).slice(2, 10);
 
 // ---------------------------------------------------------------- BroadcastChannel
@@ -83,7 +107,7 @@ export class PeerHostLink {
   _open() {
     if (this.closed) return;
     const Peer = globalThis.Peer;
-    const peer = this.peer = new Peer(peerIdFor(this.room), { debug: 1, ...this.peerOptions });
+    const peer = this.peer = new Peer(peerIdFor(this.room), peerOpts(this.peerOptions));
     peer.on('open', () => { this.retries = 0; this.onStatus(this.main ? 'connected' : 'waiting'); });
     peer.on('connection', (conn) => this._adopt(conn));
     peer.on('disconnected', () => { if (!this.closed) { this.onStatus('error', { message: '与信令服务器断开，重连中…', transient: true }); this._later(() => { try { peer.reconnect(); } catch (e) { this._recreate(); } }); } });
@@ -98,6 +122,14 @@ export class PeerHostLink {
   _recreate() { try { this.peer.destroy(); } catch (e) { /* */ } this._open(); }
   _adopt(conn) {
     const ch = conn.metadata && conn.metadata.ch;
+    if (ch !== 'tilt' && !this.main) {
+      this.onStatus('pairing', { message: '发现手机，正在建立点对点连接…' });
+      watchIce(conn, (st, cn) => {
+        if (this.main) return;
+        if (st === 'failed') this.onStatus('waiting', { message: '点对点连接失败（网络限制），请确认手机与电脑在同一 Wi‑Fi，或换用手机热点', iceFailed: true });
+        else if (st !== 'connected' && st !== 'completed') this.onStatus('pairing', { message: '发现手机，点对点连接：' + cn });
+      });
+    }
     conn.on('open', () => {
       if (ch === 'tilt') { this.tilt = conn; }
       else { if (this.main && this.main !== conn) { try { this.main.close(); } catch (e) { /* */ } } this.main = conn; this.onStatus('connected'); }
@@ -126,8 +158,8 @@ export class PeerClientLink {
   }
   _peer() {
     if (this.closed) return;
-    const peer = this.peer = new globalThis.Peer(undefined, { debug: 1, ...this.peerOptions });
-    peer.on('open', () => this._connect());
+    const peer = this.peer = new globalThis.Peer(undefined, peerOpts(this.peerOptions));
+    peer.on('open', () => { this.onStatus('connecting', { message: '已连上信令服务器，正在寻找主机…' }); this._connect(); });
     peer.on('disconnected', () => { if (!this.closed && !peer.destroyed) { try { peer.reconnect(); } catch (e) { /* */ } } });
     peer.on('error', (err) => {
       if (this.closed) return;
@@ -143,7 +175,9 @@ export class PeerClientLink {
     try { this.main && this.main.close(); this.tilt && this.tilt.close(); } catch (e) { /* */ }
     const main = this.main = this.peer.connect(hostId, { reliable: true, serialization: 'json', metadata: { ch: 'main' } });
     clearTimeout(this.openTimer);
-    this.openTimer = setTimeout(() => { if (main === this.main && !main.open) { this.onStatus('reconnecting', { message: '连接超时，重试中…', transient: true }); this._retry(() => this._connect()); } }, 12000);
+    let ice = 'new';
+    watchIce(main, (st, cn) => { ice = st; if (main === this.main && !main.open) this.onStatus('connecting', { message: '点对点连接：' + cn + (st === 'failed' ? '（网络限制，见说明文档）' : '') }); });
+    this.openTimer = setTimeout(() => { if (main === this.main && !main.open) { this.onStatus('reconnecting', { message: ice === 'new' ? '主机无应答，重试中…（确认电脑端游戏页已打开且房间号一致）' : '点对点连接超时（' + (ICE_CN[ice] || ice) + '），重试中…', transient: true }); this._retry(() => this._connect()); } }, 15000);
     main.on('open', () => {
       clearTimeout(this.openTimer); this.attempt = 0;
       this.onStatus('connected');

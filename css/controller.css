@@ -112,3 +112,4 @@ code { background: #0007; padding: 1px 5px; border-radius: 4px; font-size: 13px;
   body.sim .screen { padding-bottom: 210px; min-height: 0; }
   body.sim.playing { overflow: auto; }
 }
+.hint.net-ok { color: #5dff8a; } .hint.net-bad { color: #ff6b6b; } #intro-net { font-size: 13px; margin-top: 8px; }

@@ -170,6 +170,8 @@ function onNetStatus(st) {
   const [cls, txt] = map[st.state] || ['', st.state];
   pill.className = 'pill ' + cls; $('conn-text').textContent = txt;
   $('rtt').textContent = st.message && st.state !== 'connected' ? st.message : (st.rttMs != null ? `延迟 ${st.rttMs} ms` : '— ms');
+  const net = $('intro-net');
+  if (net) { net.hidden = false; net.textContent = '网络：' + txt + (st.message && st.state !== 'connected' ? ' · ' + st.message : (st.state === 'connected' ? ' · 点“开始”继续' : '')); net.className = 'hint net-' + (cls || 'wait'); }
   if (st.state === 'connected') send_hello_ack();
 }
 function send_hello_ack() { /* hello is sent by the client on connect */ }
@@ -396,7 +398,7 @@ function init() {
   if (secure) ok.innerHTML = SIM ? '<b>模拟器模式</b>：用鼠标 / 键盘生成传感器数据，走与真机相同的识别流程。' : '<b>环境正常</b>（HTTPS 安全上下文）。点击“开始”将请求 <b>动作与方向</b> 权限。';
   if (!secure) $('btn-start').disabled = true;
   if (!S.room) { $('room-field').hidden = false; $('btn-demo').hidden = false; }
-  else $('intro-hint').textContent = `房间号 ${S.room}${LOCAL ? '（本机测试通道）' : ''}`;
+  else { $('intro-hint').textContent = `房间号 ${S.room}${LOCAL ? '（本机测试通道）' : ''}`; connect(); }   // connect right away so the status is visible before "开始"
   if (!SIM && typeof DeviceMotionEvent === 'undefined') $('intro-hint').textContent = '此浏览器不支持动作传感器，可使用触屏模式。';
 
   $('btn-start').addEventListener('click', onStart);

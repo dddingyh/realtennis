@@ -179,7 +179,7 @@ export class Hud {
 
   phoneIcon(ctx, status) {
     const x = W - 26, y = 8;
-    const col = status === 'connected' ? '#5dff8a' : status === 'connecting' ? '#ffe45c' : '#ff6b6b';
+    const col = status === 'connected' ? '#5dff8a' : (status === 'connecting' || status === 'waiting' || status === 'pairing') ? '#ffe45c' : '#ff6b6b';
     ctx.fillStyle = '#05080f'; ctx.fillRect(x - 1, y - 1, 20, 17);
     ctx.fillStyle = PANEL; ctx.fillRect(x - 2, y - 2, 20, 17);
     ctx.fillStyle = EDGE; ctx.fillRect(x - 2, y - 2, 20, 1); ctx.fillRect(x - 2, y + 14, 20, 1); ctx.fillRect(x - 2, y - 2, 1, 17); ctx.fillRect(x + 17, y - 2, 1, 17);

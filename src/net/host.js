@@ -3,7 +3,7 @@
 //   host.roomCode / host.controllerUrl / host.send(msg) / host.close()
 // onMessage(msg): msg is a sanitized protocol message; swing/tilt/btn messages carry msg.ageMs (how long ago on the
 //   host's clock the phone event physically happened, = latency compensation for sim.swing).
-// onStatus(st): { state: 'starting'|'waiting'|'connected'|'stale'|'error', connected, rttMs, offsetMs, roomCode, controllerUrl, message?, hand? }
+// onStatus(st): { state: 'starting'|'waiting'|'pairing'|'connected'|'stale'|'error', connected, rttMs, offsetMs, roomCode, controllerUrl, message?, hand? }
 import { PROTOCOL_VERSION } from '../config.js';
 import { createLink, loadQrCode } from './transport.js';
 import { ClockSync, makeRoomCode, sanitize } from './protocol.js';
@@ -60,6 +60,7 @@ export function createRemoteHost({ onMessage = () => {}, onStatus = () => {}, lo
     if (s === 'connected') { lastRx = Date.now(); burst = 5; setState('connected'); return; }
     if (s === 'waiting') { hello = null; setState('waiting', detail); return; }
     if (s === 'starting') { setState('starting'); return; }
+    if (s === 'pairing') { if (state !== 'connected') setState('pairing', detail); return; }
     if (s === 'error') { setState('error', detail); return; }
   }
 
