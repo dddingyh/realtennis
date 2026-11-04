@@ -14,7 +14,7 @@ export const ARCHETYPES = {
     look: { skin: '#e0a97c', hair: '#2a1d12', shirt: '#e8e8e0', shorts: '#2a3a6a', shoes: '#f0f0f0', headband: null },
   },
   elastic: {
-    h: 1.01, leg: 1.0, arm: 1.02, sh: 0.97, hipW: 0.97, muscle: 0.88, lean: 0.04, stance: 1.16, drop: 0.045, tb: 0.80, early: 0, flat: 0.25, open: 0.2, hair: 'short',
+    h: 1.01, leg: 1.0, arm: 1.02, sh: 0.97, hipW: 0.97, muscle: 0.88, lean: 0.05, stance: 1.24, drop: 0.065, tb: 0.80, early: 0, flat: 0.25, open: 0.2, hair: 'short',
     look: { skin: '#d9a27a', hair: '#1e1712', shirt: '#2e6fbf', shorts: '#1d2433', shoes: '#f2f2f2', headband: null, trim: '#e8eef6' },
   },
   lanky: {
@@ -130,7 +130,7 @@ export function adaptContact(P, anim, ph, S0, A, samplePose) {
     P.hip = add(P.hip, [clamp(D[0] * 0.45, -0.35, 0.35) * wb, clamp(D[1] * 0.15, -0.10, 0.04) * wb, clamp(D[2] * 0.3, -0.2, 0.25) * wb]);
     // outside foot steps toward the ball (fh: racket-side foot, bh: other foot); front foot toward balls in front
     const lat = D[0] * sgn;
-    const out = clamp(lat * 0.75, -0.25, 0.6) * sgn * wb;
+    const out = clamp(lat * 0.6, -0.25, 0.42) * sgn * wb;
     if (sgn > 0) P.fR = add(P.fR, [out, 0, 0]); else P.fL = add(P.fL, [out, 0, 0]);
     const fz = clamp(D[2] * 0.5, -0.2, 0.35) * wb;
     if (sgn > 0) P.fL = add(P.fL, [0, 0, fz]); else P.fR = add(P.fR, [0, 0, fz]);
@@ -147,7 +147,7 @@ export function adaptContact(P, anim, ph, S0, A, samplePose) {
       } else {
         // open-stance lunge: outside leg loaded far out, centre of mass low, arm fully out
         P.hip = add(P.hip, [0.08 * sgn * k, -0.10 * k, 0]);
-        if (sgn > 0) P.fR = add(P.fR, [0.22 * k, 0, 0.06 * k]); else P.fL = add(P.fL, [-0.22 * k, 0, 0.06 * k]);
+        if (sgn > 0) P.fR = add(P.fR, [0.12 * k, 0, 0.10 * k]); else P.fL = add(P.fL, [-0.12 * k, 0, 0.10 * k]);
         P.lean += 0.12 * k; P.side += 0.06 * sgn * k;
       }
       break;

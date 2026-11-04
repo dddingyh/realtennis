@@ -34,8 +34,8 @@ function basis(a, hint) {
 }
 
 // camera: view = (right, up, forward) basis in character space
-export function viewBasis(role) {
-  const pitch = role === 'near' ? 0.48 : 0.24;
+export function viewBasis(role, pitchIn) {
+  const pitch = pitchIn != null ? pitchIn : role === 'near' ? 0.46 : 0.215;
   const c = Math.cos(pitch), s = Math.sin(pitch);
   if (role === 'near') return { R: [1, 0, 0], U: [0, c, s], F: [0, -s, c], pitch };
   return { R: [-1, 0, 0], U: [0, c, -s], F: [0, -s, -c], pitch };
@@ -45,7 +45,10 @@ export function viewBasis(role) {
 export function lodOf(s) { return s >= 34 ? 2 : s >= 20 ? 1 : 0; }
 
 export function buildModel(J, look, role, s, opt = {}) {
-  const { R, U, F } = viewBasis(role);
+  const { R, U, F } = viewBasis(role, opt.pitch);
+  const AR = opt.arch || { muscle: 1, hair: 'short' };
+  const mv = AR.muscle;                       // muscle volume (lean / wiry archetypes < 1)
+  const Mc = 0.5 + 0.5 * mv;                  // limb cores / deltoids follow at half strength
   const TP = (p) => [dot(p, R), dot(p, U), dot(p, F)]; // point / direction -> view space
   const lod = lodOf(s);
   const prims = [];
@@ -67,13 +70,13 @@ export function buildModel(J, look, role, s, opt = {}) {
   const twist = Math.atan2(dot(cross(pel.f, chs.f), [0, 1, 0]), dot(pel.f, chs.f));
   // pelvis + glutes (shorts)
   ell(MAT.SHORTS, comb(J.hip, pel.u, 0.03), P3, [0.158, 0.105, 0.108], K, PART.PELVIS, HOOK.PELVIS);
-  for (const sg of [1, -1]) ell(MAT.SHORTS, comb(J.hip, pel.r, 0.072 * sg, pel.f, -0.048, pel.u, -0.035), P3, [0.080, 0.090, 0.070], 0.06, PART.PELVIS, HOOK.PELVIS);
+  for (const sg of [1, -1]) ell(MAT.SHORTS, comb(J.hip, pel.r, 0.072 * sg, pel.f, -0.048, pel.u, -0.035), P3, [0.080 * Mc, 0.090, 0.070 * Mc], 0.06, PART.PELVIS, HOOK.PELVIS);
   // waist, ribcage, lats, pecs, upper back
   ell(MAT.SHIRT, comb(J.hip, midU, 0.200), M3, [0.136, 0.135, 0.100], 0.07, PART.TORSO, HOOK.TORSO);
   ell(MAT.SHIRT, J.chestC, C3, [0.158, 0.165, 0.108], 0.07, PART.TORSO, HOOK.TORSO);
   for (const sg of [1, -1]) {
-    ell(MAT.SHIRT, comb(J.chestC, chs.r, 0.085 * sg, chs.f, -0.030, chs.u, -0.01), C3, [0.078, 0.14, 0.070], 0.07, PART.TORSO, HOOK.TORSO);
-    ell(MAT.SHIRT, comb(J.chestC, chs.r, 0.066 * sg, chs.f, 0.050, chs.u, 0.065), C3, [0.074, 0.058, 0.050], 0.06, PART.TORSO, HOOK.TORSO);
+    ell(MAT.SHIRT, comb(J.chestC, chs.r, 0.085 * sg, chs.f, -0.030, chs.u, -0.01), C3, [0.078 * mv, 0.14, 0.070 * mv], 0.07, PART.TORSO, HOOK.TORSO);
+    ell(MAT.SHIRT, comb(J.chestC, chs.r, 0.066 * sg, chs.f, 0.050, chs.u, 0.065), C3, [0.074, 0.058, 0.050 * mv], 0.06, PART.TORSO, HOOK.TORSO);
   }
   ell(MAT.SHIRT, comb(J.neckBase, chs.u, -0.08, chs.f, -0.035), C3, [0.13, 0.075, 0.066], 0.05, PART.TORSO, HOOK.TORSO);
   // trapezius slope and clavicles: proper neck-to-shoulder line
@@ -105,7 +108,13 @@ export function buildModel(J, look, role, s, opt = {}) {
   const cap = !!look.cap;
   ell(MAT.HAIR, hp(0, 0.018, -0.022), H3, hr(0.084, 0.098, 0.099), 0.02, PART.HAIR, HOOK.HAIR);
   ell(MAT.HAIR, hp(0, -0.012, -0.055), H3, hr(0.068, 0.062, 0.052), 0.03, PART.HAIR, HOOK.HAIR); // nape
-  if (lod >= 1 && !cap) {
+  if (lod >= 1 && !cap && AR.hair === 'wavy') {
+    // fuller, wavy volume: bigger locks around the crown, over the ears and down the nape, plus a soft fringe
+    const CL = [[0, 0.085, 0.05, 0.048], [0.048, 0.07, 0.03, 0.044], [-0.05, 0.07, 0.025, 0.044], [0, 0.095, -0.02, 0.05],
+      [0.07, 0.03, -0.03, 0.040], [-0.07, 0.03, -0.03, 0.040], [0.055, -0.01, -0.06, 0.038], [-0.055, -0.01, -0.06, 0.038],
+      [0, 0.04, -0.09, 0.048], [0, -0.03, -0.085, 0.042], [0.03, 0.055, 0.085, 0.030], [-0.035, 0.05, 0.08, 0.030], [0.082, 0.0, 0.01, 0.026], [-0.082, 0.0, 0.01, 0.026]];
+    for (const [x, y, z, r] of CL) ell(MAT.HAIR, add(hp(x, y, z), hairLag), H3, hr(r, r * 0.85, r), 0.025, PART.HAIR, HOOK.HAIR);
+  } else if (lod >= 1 && !cap) {
     const CL = [[0, 0.085, 0.045, 0.040], [0.040, 0.075, 0.02, 0.034], [-0.042, 0.074, 0.015, 0.034], [0, 0.090, -0.02, 0.040],
       [0.050, 0.055, -0.045, 0.036], [-0.050, 0.055, -0.045, 0.036], [0, 0.060, -0.075, 0.040], [0.022, 0.07, 0.07, 0.026], [-0.03, 0.068, 0.068, 0.026]];
     for (const [x, y, z, r] of CL) ell(MAT.HAIR, add(hp(x, y, z), hairLag), H3, hr(r, r * 0.8, r), 0.022, PART.HAIR, HOOK.HAIR);
@@ -136,19 +145,19 @@ export function buildModel(J, look, role, s, opt = {}) {
     const A3 = [a, bend, side];
     const ul = len(sub(el, sh)), fl = len(sub(wr, el));
     // deltoid + sleeve (shirt)
-    ell(MAT.SHIRT, comb(sh, a, 0.040, chs.u, 0.006), A3, [0.083, 0.058, 0.060], 0.04, partSleeve, HOOK.SLEEVE, { a: TP(sh), d: TP(a), L: 0.155 });
+    ell(MAT.SHIRT, comb(sh, a, 0.040, chs.u, 0.006), A3, [0.083, 0.058 * Mc, 0.060 * Mc], 0.04, partSleeve, HOOK.SLEEVE, { a: TP(sh), d: TP(a), L: 0.155 });
     cone(MAT.SHIRT, sh, comb(sh, a, 0.155), 0.062, 0.056, 0.03, partSleeve, HOOK.SLEEVE, { a: TP(sh), d: TP(a), L: 0.155 });
     // upper arm: humerus core + biceps + triceps
-    cone(MAT.SKIN, sh, el, 0.045, 0.036, K, PART.BODY);
+    cone(MAT.SKIN, sh, el, 0.045 * Mc, 0.036 * Mc, K, PART.BODY);
     if (lod >= 1) {
-      ell(MAT.SKIN, comb(sh, a, ul * 0.56, bend, 0.014), A3, [0.095, 0.031, 0.035], 0.03, PART.BODY);
-      ell(MAT.SKIN, comb(sh, a, ul * 0.46, bend, -0.019), A3, [0.105, 0.033, 0.037], 0.03, PART.BODY);
+      ell(MAT.SKIN, comb(sh, a, ul * 0.56, bend, 0.014), A3, [0.095, 0.031 * mv, 0.035 * mv], 0.03, PART.BODY);
+      ell(MAT.SKIN, comb(sh, a, ul * 0.46, bend, -0.019), A3, [0.105, 0.033 * mv, 0.037 * mv], 0.03, PART.BODY);
     }
     sph(MAT.SKIN, comb(el, bend, -0.006), 0.034, 0.03, PART.BODY);
     // forearm: flexor/brachioradialis bulge near the elbow, tapering to a flat wrist
     const fb = norm(perp(bend, fa)), fs = norm(cross(fa, fb));
     cone(MAT.SKIN, el, wr, 0.036, 0.024, K, PART.BODY);
-    if (lod >= 1) ell(MAT.SKIN, comb(el, fa, fl * 0.27, fs, 0.006 * sgn), [fa, fb, fs], [0.090, 0.039, 0.042], 0.035, PART.BODY);
+    if (lod >= 1) ell(MAT.SKIN, comb(el, fa, fl * 0.27, fs, 0.006 * sgn), [fa, fb, fs], [0.090, 0.039 * mv, 0.042 * mv], 0.035, PART.BODY);
     ell(MAT.SKIN, wr, [fa, fb, fs], [0.022, 0.020, 0.028], 0.02, PART.BODY);
     // wristband
     cone(MAT.BAND, comb(wr, fa, -0.012), comb(wr, fa, -0.075), 0.033, 0.035, 0.0, PART.BODY);
@@ -180,10 +189,10 @@ export function buildModel(J, look, role, s, opt = {}) {
     const tl = len(sub(kn, hj)), sl = len(sub(an, kn));
     const T3 = [a, kf, kside];
     // thigh: femur core + quads + hamstrings + vastus medialis teardrop
-    cone(MAT.SKIN, hj, kn, 0.082, 0.049, K, PART.BODY);
-    ell(MAT.SKIN, comb(hj, a, tl * 0.50, kf, 0.022), T3, [0.20, 0.060, 0.066], 0.04, PART.BODY);
+    cone(MAT.SKIN, hj, kn, 0.082 * Mc, 0.049, K, PART.BODY);
+    ell(MAT.SKIN, comb(hj, a, tl * 0.50, kf, 0.022), T3, [0.20, 0.060 * mv, 0.066 * mv], 0.04, PART.BODY);
     if (lod >= 1) {
-      ell(MAT.SKIN, comb(hj, a, tl * 0.42, kf, -0.03), T3, [0.19, 0.054, 0.060], 0.04, PART.BODY);
+      ell(MAT.SKIN, comb(hj, a, tl * 0.42, kf, -0.03), T3, [0.19, 0.054 * mv, 0.060 * mv], 0.04, PART.BODY);
       ell(MAT.SKIN, add(comb(hj, a, tl * 0.84, kf, 0.012), mul(inward, 0.028)), T3, [0.062, 0.034, 0.033], 0.03, PART.BODY);
       ell(MAT.SKIN, comb(kn, kf, 0.026, a, -0.004), T3, [0.030, 0.022, 0.030], 0.02, PART.BODY); // patella
     }
@@ -196,7 +205,7 @@ export function buildModel(J, look, role, s, opt = {}) {
     const S3 = [sa, sb, ss];
     const shinEx = { a: TP(kn), d: TP(sa), L: sl };
     cone(MAT.SKIN, kn, an, 0.046, 0.025, K, PART.BODY, HOOK.SHIN, shinEx);
-    ell(MAT.SKIN, comb(kn, sa, sl * 0.28, sb, -0.026), S3, [0.12, 0.042, 0.048], 0.035, PART.BODY, HOOK.SHIN, shinEx);
+    ell(MAT.SKIN, comb(kn, sa, sl * 0.28, sb, -0.026), S3, [0.12, 0.042 * mv, 0.048 * mv], 0.035, PART.BODY, HOOK.SHIN, shinEx);
     if (lod >= 1) {
       ell(MAT.SKIN, add(comb(kn, sa, sl * 0.33, sb, -0.020), mul(inward, 0.016)), S3, [0.10, 0.038, 0.034], 0.03, PART.BODY, HOOK.SHIN, shinEx);
       cone(MAT.SKIN, comb(kn, sa, sl * 0.62, sb, -0.020), comb(an, sb, -0.026), 0.020, 0.016, 0.02, PART.BODY, HOOK.SHIN, shinEx); // Achilles

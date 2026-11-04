@@ -42,13 +42,24 @@ const sgn = (x) => (x < 0 ? -1 : 1);
 const HALF_W = COURT.singlesHalfWidth;
 const XSCALE = 3.4;     // approx. conversion world x -> normalized aimX (matches shot.js xLim)
 
+/**
+ * Menu difficulty -> internal skill. Piecewise-linear, calibrated with the human-like bot of tests/sim_compete.mjs so
+ * that the bot wins ~65 % (0.2), ~47 % (0.5), ~32 % (0.8) and ~20 % (1.0) of points.
+ */
+export function effectiveLevel(L) {
+  if (L <= 0.5) return L;
+  if (L <= 0.8) return 0.5 + (L - 0.5) * 0.85;
+  return 0.755 + (L - 0.8) * 1.225;
+}
+
 export class AIController {
   /** @param {import('./simulation.js').Simulation} sim @param {0|1} index @param {string} style @param {number} level 0..1 */
   constructor(sim, index, style = 'grinder', level = 0.6) {
     this.sim = sim; this.i = index; this.o = 1 - index;
     this.styleName = STYLES[style] ? style : 'grinder';
     this.S = STYLES[this.styleName];
-    this.level = clamp(level, 0, 1);
+    this.nominalLevel = clamp(level, 0, 1);
+    this.level = effectiveLevel(this.nominalLevel);
     this.me = sim.players[index];
     this.seenHit = -1;
     this.reactAt = 0;
@@ -60,7 +71,7 @@ export class AIController {
     this.serveHist = { deuce: [], ad: [] };
     this.tossed = false;
     this.jitter = 0;
-    this.me.speedMul = lerp(0.92, 1.0, this.level);
+    this.me.speedMul = lerp(0.91, 1.0, this.level);
   }
 
   // ------------------------------------------------------------ hooks
@@ -156,7 +167,7 @@ export class AIController {
       const react = lerp(0.36, 0.12, this.level) * (sim.rally.shots === 1 ? 0.7 : 1);
       this.reactAt = sim.time + react * sim.rngAI.range(0.85, 1.15);
       this.plan = null; this.planKey = -1; this.pending = null;
-      this.swingMs = sim.rngAI.gauss(0, 8 + 58 * (1 - this.level));
+      this.swingMs = sim.rngAI.gauss(0, 8 + 62 * (1 - this.level));
     }
     if (sim.time < this.reactAt) { if (this.netMode) this._recoverMove(1); else this._stop(); return; }   // split step, read the ball
     const key = sim.hitCount * 4 + b.bounces;
@@ -240,7 +251,7 @@ export class AIController {
     const mySgn = Math.abs(me.pos.x) > 0.8 ? sgn(me.pos.x) : sgn(b.pos.x || 1);
     const openSide = Math.abs(oppX) > 1.0 ? -sgn(oppX) : (weakDir || (rng.chance(0.5) ? 1 : -1));
     const sloppy = rng.chance((1 - L) * 0.3);                        // decision-quality lapse
-    const risk = 1.3 - 0.35 * L;
+    const risk = 1.38 - 0.48 * L;
     const pw = (r) => lerp(r[0], r[1], rng.next());
     let d;
 

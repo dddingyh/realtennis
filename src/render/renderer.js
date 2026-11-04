@@ -154,7 +154,7 @@ export class Renderer {
     const pl = state.players[at.i];
     if (!pl) return p;
     const { p: fp, s, role } = this.spriteXform(pl, at.i);
-    const { R, U } = viewBasis(role);
+    const { R, U } = this.sprites.viewOf(at.i, pl, role); // same view pitch as the player's sprite
     const mir = pl.hand === 'L' ? -1 : 1;
     let c;
     const a = pl.anim || {};

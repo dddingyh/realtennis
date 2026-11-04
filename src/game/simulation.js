@@ -25,7 +25,9 @@ export const DEFAULT_TIMING = {
 };
 /** Default game speed (sim seconds per real second), DESIGN §7.3. */
 export const DEFAULT_TIME_SCALE = 0.85;
-const HISTORY = 48;                 // ball history ring entries (~330 ms at 120 Hz)
+const HISTORY = 48;
+/** 'assist' auto-move: reaction (s) and how far (m) it moves the player on its own for one ball. */
+export const ASSIST = { react: 0.25, reach: 1.2 };                 // ball history ring entries (~330 ms at 120 Hz)
 const BUFFER_MS = { keyboard: 150, ai: 100, remote: 240 };
 const RALLY_TIMEOUT = 20;           // s watchdog
 const SERVING_TIMEOUT = 8;
@@ -90,6 +92,7 @@ export class Simulation {
     this.lastShot = null;
     this._plans = [null, null];
     this._recov = [null, null];
+    this._assistOrigin = [null, null];
     this.stats = this._newStats();
     this.state = {
       time: 0, timeScale: this.timeScale, surface: this.surfaceKey, ball: this.ball, players: this.players,
@@ -217,7 +220,7 @@ export class Simulation {
       aimX: p.aimX ?? null, aimDepth: p.aimDepth ?? null,
       ageMs: clamp(p.ageMs || 0, 0, 150) * this.timeScale,     // real ms -> sim ms
       source: p.source === 'remote' || p.source === 'ai' ? p.source : 'keyboard',
-      risk: p.risk, edge: p.edge,
+      risk: p.risk, edge: p.edge, defensive: !!p.defensive,
       spin: Number.isFinite(p.spin) ? p.spin : null, lift: Number.isFinite(p.lift) ? p.lift : null, exec: Number.isFinite(p.exec) ? p.exec : null,
     };
   }
@@ -803,6 +806,7 @@ export class Simulation {
       const goal = auto ? this._autoGoal(i) : null;
       if (!auto || (pl.autoMove === 'assist' && mm > 0.2)) {
         pl.target = null; pl.intent.x = man.x; pl.intent.z = man.z;  // manual steering (assist: overrides while held)
+        if (this._assistOrigin[i]) { this._assistOrigin[i].x = pl.pos.x; this._assistOrigin[i].z = pl.pos.z; }
       } else if (goal) pl.moveTo(goal.x, goal.z, goal.timeLeft ?? null);
       else if (pl.autoMove === 'full') pl.hold();
       else { pl.target = null; pl.intent.x = man.x; pl.intent.z = man.z; }
@@ -817,9 +821,22 @@ export class Simulation {
   _autoGoal(i) {
     const pl = this.players[i], b = this.ball;
     const c = this._plan(i);
+    const full = pl.autoMove === 'full';
     if (c) {
-      if (pl.splitT > 0 || this.time - this.rally.lastHitTime < 0.12) return pl.target;   // reacting: keep last order
-      return c.plan ? { x: c.plan.stand.x, z: c.plan.stand.z, timeLeft: c.plan.t - (this.time - c.time) } : pl.target;
+      // human-like reaction: 'full' (easy mode) 0.15 s, 'assist' 0.25 s after the opponent's contact
+      if (pl.splitT > 0 || this.time - this.rally.lastHitTime < (full ? 0.15 : ASSIST.react)) return pl.target;
+      if (!c.plan) return pl.target;
+      const g = { x: c.plan.stand.x, z: c.plan.stand.z, timeLeft: c.plan.t - (this.time - c.time) };
+      if (!full) {
+        // 'assist' only covers comfortable balls: at most ASSIST.reach from where the player was when the ball was
+        // read (or last steered), calm footwork (no sprint). Wide / short balls need the player's own steering.
+        let o = this._assistOrigin[i];
+        if (!o || o.key !== c.key) o = this._assistOrigin[i] = { key: c.key, x: pl.pos.x, z: pl.pos.z };
+        const dx = g.x - o.x, dz = g.z - o.z, d = Math.hypot(dx, dz);
+        if (d > ASSIST.reach) { g.x = o.x + dx / d * ASSIST.reach; g.z = o.z + dz / d * ASSIST.reach; }
+        g.timeLeft = null;
+      }
+      return g;
     }
     const away = this.phase === 'rally' && b.inPlay && b.lastHitBy === i;
     if (!away) return null;

@@ -6,7 +6,8 @@
 // in a pool of module workers (sprite_worker.js); while a frame is in flight the nearest cached frame of the same
 // state is shown.
 import { PixBuf } from './raster.js';
-import { poseFor, solve, clamp, mixPose } from './pose.js';
+import { poseFor, solve, solveStroke, clamp, mixPose } from './pose.js';
+import { archOf, archName } from './char_arch.js';
 import { buildModel, viewBasis } from './char_model.js';
 import { marchModel, finish, paletteFor } from './char_sdf.js';
 import { LOCO, DEFAULT_STRIDE, strideCorrection } from './char_loco.js';
@@ -17,22 +18,31 @@ const DEFAULT_LOOK = { skin: '#e0a97c', hair: '#2a1d12', shirt: '#e8e8e0', short
 // DOM-free: animation -> RGBA pixels { w, h, px: Uint32Array, ox, oy } (ox/oy = feet anchor)
 export function renderPlayerPixels(anim, pl, role, s, ctx = {}) {
   const look = pl.look || DEFAULT_LOOK, hand = pl.hand || 'R';
+  const arch = archName(look);
   const mir = hand === 'L' ? -1 : 1;
-  let P = poseFor(anim, { ...ctx, role, mir });
-  if (ctx.from) P = mixPose(poseFor(ctx.from.a, { ...ctx.from.c, role, mir }), P, ctx.from.w);
-  const J = solve(P, hand);
+  const pc = { ...ctx, role, mir, arch };
+  let P = poseFor(anim, pc);
+  if (ctx.from) P = mixPose(poseFor(ctx.from.a, { ...ctx.from.c, role, mir, arch }), P, ctx.from.w);
+  const J = solveStroke(P, ctx.from ? null : anim, hand, arch);
   // secondary motion: hair / headband tails trail the head (pose a moment earlier)
   let lag = null;
   const prev = prevAnim(anim, ctx);
   if (prev && s >= 22) {
-    const Jp = solve(poseFor(prev.a, { ...prev.c, role, mir }), hand);
+    const Jp = solve(poseFor(prev.a, { ...prev.c, role, mir, arch }), hand, arch);
     lag = [Jp.headC[0] - J.headC[0], Jp.headC[1] - J.headC[1], Jp.headC[2] - J.headC[2]].map((v) => Math.max(-0.05, Math.min(0.05, v * 1.4)));
   }
-  const model = buildModel(J, look, role, s, { lag });
-  const vb = viewBasis(role);
+  const model = buildModel(J, look, role, s, { lag, pitch: ctx.pitch, arch: archOf(look) });
+  const vb = viewBasis(role, ctx.pitch);
   const buf = marchModel(model, s, look, { role, U: vb.U, F: vb.F });
   const px = finish(buf, paletteFor(look), s, { innerDepth: role === 'near' ? 0.08 : 0.10, inner: s >= 22 });
   return { w: buf.W, h: buf.H, px, ox: buf.ox, oy: buf.oy };
+}
+// sprite view pitch from the camera: elevation of the ray to the player's body centre, in 1-degree bands
+export function viewPitchFor(pl, role) {
+  if (!pl || !pl.pos) return null;
+  const C = camera.pos;
+  const deg = Math.atan2(C.y - 0.9, Math.abs(C.z - pl.pos.z)) * 180 / Math.PI;
+  return Math.round(deg) * Math.PI / 180;
 }
 function prevAnim(a, ctx) {
   if (a.name === 'swing' || a.name === 'serve') return { a: { ...a, phase: Math.max(0, (a.phase || 0) - 0.035) }, c: ctx };
@@ -54,7 +64,7 @@ export const SPRITE_SERVE_Q = SERVE_Q; // serve / bounce phase quantisation (ren
 const ZERO = { x: 0, z: 0 };
 let _empty = null;
 const EMPTY_FRAME = () => { if (!_empty) { const c = document.createElement('canvas'); c.width = 1; c.height = 1; _empty = { canvas: c, ax: 0, ay: 0, w: 1, h: 1, fam: null, ph: 0, s: 0 }; } return _empty; };
-const CACHE_BYTES = 160 * 1024 * 1024, SYNC_BUDGET_MS = 6;
+const CACHE_BYTES = 200 * 1024 * 1024, SYNC_BUDGET_MS = 6, CONTACT_BIN = 0.12;
 // pose-blend categories: switching between these cross-fades the pose over BLEND_T seconds
 function blendCat(n) {
   if (LOCO.has(n)) return 'loco:' + n;
@@ -62,7 +72,7 @@ function blendCat(n) {
   if (n === 'swing') return 'swing';
   return null;
 }
-const lookKey = (look) => `${look.shirt}${look.shorts}${look.hair}${look.skin}${look.shoes}${look.headband || ''}`;
+const lookKey = (look) => `${look.shirt}${look.shorts}${look.hair}${look.skin}${look.shoes}${look.headband || ''}${look.archetype || ''}${look.trim || ''}`;
 
 // crop a rendered RGBA frame to its opaque bounds (shared by the worker and the synchronous path)
 export function cropPixels(r) {
@@ -143,7 +153,7 @@ export class SpriteFactory {
     this.disp = [null, null]; // displayed swing phase (eases the jump from the load pose to contact)
     this.stats = { frames: 0, ms: 0, maxMs: 0, gets: 0, exact: 0, fallback: 0, fbNear: 0, sync: 0, fbRuns: 0, fbFrames: 0, main: [], cur: 0 };
     this.fbRun = [0, 0];
-    this.warmed = new Set(); this.warmQ = []; this.autoWarm = true;
+    this.warmed = new Set(); this.warmQ = []; this.reqd = new Set(); this.autoWarm = true;
     this.sync = !!opts.sync; this.syncSpent = 0; this.forceExact = !!opts.exact;
     this.pool = null;
     if (!this.sync && !this.forceExact && typeof window !== 'undefined' && typeof Worker !== 'undefined') {
@@ -174,14 +184,14 @@ export class SpriteFactory {
 
   // camera px per metre / sprite px per metre on the ground at the player's position, per screen axis.
   // Locomotion poses scale the planted-foot travel by these so feet stay fixed on the court.
-  groundRatio(pl, role, s) {
+  groundRatio(pl, role, s, pitch) {
     if (!pl.pos) return [1, 1, 1, 0];
     // secant ratios over a typical stance excursion; depth uses separate ratios ahead of / behind the anchor
     // because perspective is not linear in depth
     const x = pl.pos.x, z = pl.pos.z, e = 0.35, fw = role === 'near' ? -1 : 1;
     const p0 = camera.project(x, 0, z), px = camera.project(x + e, 0, z);
     const pf = camera.project(x, 0, z + fw * e), pb = camera.project(x, 0, z - fw * e);
-    const sinp = Math.sin(viewBasis(role).pitch);
+    const sinp = Math.sin(viewBasis(role, pitch).pitch);
     // depth moves also shift the anchor sideways (perspective convergence): screen-x px per metre of char-forward
     const kxz = (pf.sx - pb.sx) / (2 * e) / s * viewBasis(role).R[0];
     return [Math.abs(px.sx - p0.sx) / e / s, Math.abs(pf.sy - p0.sy) / e / (s * sinp), Math.abs(pb.sy - p0.sy) / e / (s * sinp), kxz];
@@ -195,8 +205,21 @@ export class SpriteFactory {
     const name = a.name || 'ready';
     const qa = { ...a };
     const ctx = {};
+    const pitch = viewPitchFor(pl, role);
+    if (pitch != null) ctx.pitch = pitch;
     let ph = 0, extra = '', fextra = '', shift = null, cyc = 0, gs = 0, dirv = null, Lr = 0;
-    if (name === 'swing') { ph = Math.min(SWING_Q, Math.round(clamp(this.disp[i] != null ? this.disp[i] : a.phase || 0, 0, 1) * SWING_Q) + ahead); qa.phase = ph / SWING_Q; }
+    if (name === 'swing') {
+      ph = Math.min(SWING_Q, Math.round(clamp(this.disp[i] != null ? this.disp[i] : a.phase || 0, 0, 1) * SWING_Q) + ahead); qa.phase = ph / SWING_Q;
+      // contact geometry, coarsely binned (DESIGN.md §7.1)
+      const c = a.contact, v = a.variant && a.variant !== 'normal' ? a.variant : '';
+      if (c) {
+        const b = (x) => Math.round(x / CONTACT_BIN);
+        const cl = b(c.lat), cf = b(c.fwd), ch = b(c.h), cr = Math.round(clamp(a.reachT || 0, 0, 1) * 2);
+        qa.contact = { lat: cl * CONTACT_BIN, fwd: cf * CONTACT_BIN, h: ch * CONTACT_BIN }; qa.reachT = cr / 2;
+        extra = `|c${cl},${cf},${ch},${cr}${v}`;
+      } else { qa.contact = null; if (v) extra = `|${v}`; }
+      qa.variant = v || 'normal';
+    }
     else if (name === 'serve' || name === 'bounce') { ph = Math.min(SERVE_Q, Math.round(clamp(a.phase || 0, 0, 1) * SERVE_Q) + ahead); qa.phase = ph / SERVE_Q; }
     else if (name === 'split') { ph = a.phase == null ? 20 : Math.min(20, Math.round(clamp(a.phase, 0, 1) * 20) + ahead); qa.phase = ph / 20; }
     else if (LOCO.has(name)) {
@@ -213,15 +236,15 @@ export class SpriteFactory {
       const fq = fa == null ? 'n' : Math.round(fa / (Math.PI * 2) * FACE_Q);
       const spq = Math.round(clamp(a.speed == null ? 0.6 : a.speed, 0, 1) * 3);
       const acq = (a.accel || 0) > 0.5 ? 1 : (a.accel || 0) < -0.5 ? -1 : 0;
-      const [kx, kz, kzb, kxz] = this.groundRatio(pl, role, s);
+      const [kx, kz, kzb, kxz] = this.groundRatio(pl, role, s, ctx.pitch);
       // perspective corrections only enter the key when they act on this travel direction (fewer distinct frames)
       const cdx = Math.abs(dir ? dir.x : 0), cdz = Math.abs(dir ? dir.z : 0);
-      const kxq = cdx > 0.05 ? Math.round(kx * 50) : 50, kzq = cdz > 0.05 ? Math.round(kz * 50) : 50, kzbq = cdz > 0.05 ? Math.round(kzb * 50) : 50, kxzq = cdz > 0.05 ? Math.round(kxz * 50) * 2 : 0;
+      const kxq = cdx > 0.05 ? Math.round(kx * 100) : 100, kzq = cdz > 0.05 ? Math.round(kz * 100) : 100, kzbq = cdz > 0.05 ? Math.round(kzb * 100) : 100, kxzq = cdz > 0.05 ? Math.round(kxz * 50) * 2 : 0;
       const qd = dq * Math.PI * 2 / DIR_Q;
       qa.gait = ph / RUN_Q; qa.strideLen = Lq; qa.speed = spq / 3; qa.accel = acq * 0.8;
       qa.dir = dir ? { x: Math.sin(qd), z: Math.cos(qd) } : null;
       qa.face = fq === 'n' ? null : { x: Math.sin(fq * Math.PI * 2 / FACE_Q), z: Math.cos(fq * Math.PI * 2 / FACE_Q) };
-      ctx.kx = kxq / 50; ctx.kz = kzq / 50; ctx.kzb = kzbq / 50; ctx.kxz = kxzq / 100;
+      ctx.kx = kxq / 100; ctx.kz = kzq / 100; ctx.kzb = kzbq / 100; ctx.kxz = kxzq / 100;
       if (dir) { dirv = dir; const back = (gs - gr) / RUN_Q * L - strideCorrection(name, ph / RUN_Q, Lq, L); shift = { x: -dir.x * back, z: -dir.z * back }; }
       gs = ((gs % RUN_Q) + RUN_Q) % RUN_Q;
       fextra = `|d${Math.round(dang / (Math.PI * 2) * 16)}|f${fq === 'n' ? 'n' : Math.round(fq / 2)}`;
@@ -232,13 +255,16 @@ export class SpriteFactory {
     else if (name === 'celebrate') { ph = Math.floor((time * 1.8 % 1) * 12); ctx.time = ph / 12 / 1.8; }
     else if (name === 'dejected') { ph = Math.floor(time * 0.6) % 4; ctx.time = ph / 0.6; }
     const base = `${role}|${pl.hand || 'R'}|${name}|${a.shot || ''}|${a.side || ''}`;
-    const key = `${base}|${ph}${extra}|${s}|${lookKey(look)}`;
+    const key = `${base}|${ph}${extra}|${s}|p${pitch == null ? 'd' : Math.round(pitch * 180 / Math.PI)}|${lookKey(look)}`;
     // family: same state, any phase / size / perspective correction -> nearest-frame fallback while rendering
     const fam = `${base}${fextra}|${lookKey(look)}`;
     return { key, qa, ctx, shift, fam, ph, cyc, gs: cyc === RUN_Q ? gs : ph, dirv, L: Lr, Lq: cyc === RUN_Q ? qa.strideLen : 0, name, s };
   }
 
   frameKey(i, pl, role, s, time) { return this.quant(i, pl, role, s, time).key; }
+
+  // sprite view basis (right / up / forward) of player i at its current position — matches the frames drawn
+  viewOf(i, pl, role) { return viewBasis(role, viewPitchFor(pl, role)); }
 
   // serve / bounce phase of the frame shown for player i (the ball is placed in that exact pose's hand)
   shownPhase(i, phase) {
@@ -359,6 +385,17 @@ export class SpriteFactory {
     }
     if (this.pool) {
       // look-ahead: the next frames along gait / phase
+      // a newly planned contact: request the whole forward swing for it while the backswing is still playing
+      if (i < 2 && q.name === 'swing' && q.qa.contact && q.ph < SWING_Q * 0.47) {
+        const ck = q.key.replace(/\|\d+\|c/, '|*|c');
+        if (!this.reqd.has(ck)) {
+          this.reqd.add(ck); if (this.reqd.size > 500) this.reqd.clear();
+          for (let k = Math.round(SWING_Q * 0.45); k <= SWING_Q; k += 2) {
+            const qn = this.quant(i, pl, role, s, time, k - q.ph);
+            if (!this.cache.has(qn.key)) this.pool.request(qn.key, this._job(qn, pl, role, s, null), 1);
+          }
+        }
+      }
       if (i < 2 && q.cyc === RUN_Q && !this.fam.has(q.fam)) for (let k = 5; k < RUN_Q; k += 2) {
         const qn = this.quant(i, pl, role, s, time, k);
         if (!this.cache.has(qn.key)) this.pool.request(qn.key, this._job(qn, pl, role, s, null), 1);
