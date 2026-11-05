@@ -109,6 +109,7 @@ export class PixBuf {
   }
   // scanline convex/concave polygon fill, pts = [[x,y],...] (pixel-centre sampling, even-odd)
   poly(pts, c) {
+    const op = A(c) === 255;
     let minY = Infinity, maxY = -Infinity;
     for (const p of pts) { minY = Math.min(minY, p[1]); maxY = Math.max(maxY, p[1]); }
     const y0 = Math.max(0, Math.ceil(minY - 0.5)), y1 = Math.min(this.h - 1, Math.floor(maxY - 0.5));
@@ -124,7 +125,7 @@ export class PixBuf {
       xs.sort((p, q) => p - q);
       for (let k = 0; k + 1 < xs.length; k += 2) {
         const xa = Math.ceil(xs[k] - 0.5), xb = Math.floor(xs[k + 1] - 0.5);
-        for (let x = xa; x <= xb; x++) this.set(x, y, c);
+        for (let x = xa; x <= xb; x++) (op ? this.set(x, y, c) : this.blend(x, y, c));
       }
     }
   }

@@ -155,6 +155,8 @@ function perfReport() {
 function processEvents(events, state) {
   if (!events.length) return;
   renderer.onEvents(events, state);
+  // big points (ace, long rally, break, set): extra, louder applause on top of the regular point applause
+  if (renderer.bigPoint > 0) { sfx.applause(Math.min(1.6, 0.7 + renderer.bigPoint)); if (renderer.bigPoint >= 1) setTimeout(() => sfx.applause(0.9), 900); }
   hud.onEvents(events, state);
   sfx.handleEvents(events, state);
   if (phone.remote) phone.notify(events, state);

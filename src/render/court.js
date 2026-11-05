@@ -4,6 +4,7 @@ import { camera } from './camera.js';
 import { PixBuf, hex, rgba, mix, shade, bayer, hash2, mulberry32, R, G, B } from './raster.js';
 import { drawPixText, textWidth } from './font.js';
 import { STAGE, THEMES } from './stage.js';
+import { PBOX } from './crowd.js';
 
 const W = RENDER.width, H = RENDER.height;
 const { XW, ZB, BH, S, TOPH, ROW, SEAT, PANEL } = STAGE;
@@ -35,6 +36,11 @@ const TEXD = camera.project(0, 0, -ZB).scale;                                   
 const BTEX_W = Math.ceil(2 * XW * TEXD);
 const BTEX_H = Math.max(17, Math.round(camera.project(0, 0, -ZB).sy - camera.project(0, BH, -ZB).sy));
 const BIGWALL = BTEX_H >= 26;
+// screen rectangle of the back-wall LED ribbon (texture is 1:1 with screen pixels)
+export const LED_RECT = {
+  x: Math.round(camera.project(-XW, BH, -ZB).sx), y: Math.round(camera.project(0, BH, -ZB).sy),
+  w: BTEX_W, h: BIGWALL ? 11 : 9,
+};
 function makeBackWall(theme) {
   const pb = new PixBuf(BTEX_W, BTEX_H);
   const wall = hex(theme.wall), lite = hex(theme.wallLite), tx = hex(theme.text), led = hex(theme.led);
@@ -46,14 +52,7 @@ function makeBackWall(theme) {
   pb.rect(0, 0, BTEX_W, 1, hex('#2a3140'));
   pb.rect(0, ledH, BTEX_W, 1, lite);
   if (BIGWALL) pb.rect(0, ledH + 1, BTEX_W, 1, shade(wall, 0.75));
-  const msgs = ['SERVE 187 KM/H', 'ACES 5', '1ST SERVE 64%', 'SERVE 187 KM/H'];
-  let x0 = 10, mi = 0;
-  const ty = Math.floor((ledH - 7) / 2);
-  while (x0 < BTEX_W) {
-    const m = msgs[mi++ % msgs.length];
-    drawPixText(pb, m, x0, ty, led, 1);
-    x0 += textWidth(m) + Math.round(TEXD * 2.4);
-  }
+  // LED content is drawn per frame by VenueDynamics (venue.js) into the rectangle exported as LED_RECT
   pb.rect(0, BTEX_H - 2, BTEX_W, 2, shade(wall, 0.6));
   // brands: symmetric about centre, lots of empty wall
   const pw = PANEL * TEXD, c = BTEX_W / 2;
@@ -91,6 +90,24 @@ function makeClayMarks(seed) {
   return marks;
 }
 
+// ---- painted court-surround wordmarks (hard court only) ----
+function paintMask(str, font) {
+  const fh = font === 'big' ? 14 : 7;
+  const w = textWidth(str, 1, font), h = fh;
+  const pb = new PixBuf(w, h);
+  drawPixText(pb, str, 0, 0, 0xffffffff, 1, { font });
+  return { w, h, px: pb.px };
+}
+let PAINT = null;
+function paintAt(gx, gz) {
+  for (const r of PAINT) {
+    if (gx < r.x0 || gx > r.x1 || gz < r.z0 || gz > r.z1) continue;
+    const u = Math.floor((gx - r.x0) / (r.x1 - r.x0) * r.m.w), v = Math.floor((gz - r.z0) / (r.z1 - r.z0) * r.m.h);
+    if (u >= 0 && v >= 0 && u < r.m.w && v < r.m.h && r.m.px[v * r.m.w + u]) return true;
+  }
+  return false;
+}
+
 export function lineHit(gx, gz, kx, mz) {
   const ax = Math.abs(gx), az = Math.abs(gz);
   const hx = Math.max(LINE_W / 2, 0.52 / kx);
@@ -114,6 +131,10 @@ export function renderBackground(surface = 'hard', seed = 7) {
   const pb = new PixBuf(W, H);
   const px = pb.px;
   TH = THEMES[key]; const boards = makeBackWall(TH);
+  PAINT = key === 'hard' ? [
+    { x0: -3.3, x1: 3.3, z0: -18.0, z1: -15.85, m: paintMask(TH.brands[0], 'small') },   // back run-off (far)
+    { x0: -1.75, x1: 1.75, z0: 16.4, z1: 17.0, m: paintMask(TH.brands[0], 'big') },   // near: small, tone-on-tone, behind where the player stands      // back run-off (near)
+  ] : [];
   const marks = key === 'clay' ? makeClayMarks(seed) : [];
   const cam = camera.pos;
   const cy = cam.y, cz = cam.z;
@@ -195,8 +216,18 @@ function groundColor(key, pal, gx, gz, t, mz, x, y, marks) {
       else if (th > 0.3 && n > 0.55) base = pal.worn[2];
     }
   }
+  // hard: sponsor-coloured border around the blue playing area + painted wordmarks in the surround
+  if (key === 'hard') {
+    const bw = Math.max(0.06, 0.5 / kx), bz = Math.max(0.06, 0.5 * mz);
+    if ((Math.abs(ax - 7.3) <= bw && az <= 15.4 + bz) || (Math.abs(az - 15.4) <= bz && ax <= 7.3 + bw)) base = mix(hex(TH.accent), base, 0.25);
+    else if (PAINT.length && (az > 15.5) && paintAt(gx, gz)) base = mix(base, hex('#ffffff'), 0.17);
+  }
   // lines
-  if (lineHit(gx, gz, kx, mz)) base = pal.line;
+  if (lineHit(gx, gz, kx, mz)) {
+    base = pal.line;
+    // clay: loose clay brushed over the tape in places
+    if (key === 'clay') { const hb = hash2(x >> 1, y, 77); if (hb < 0.16) base = mix(pal.line, pal.inner[0], 0.55); else if (hb < 0.24) base = mix(pal.line, pal.inner[2], 0.3); }
+  }
   else if (key === 'clay' && lineHit(gx, gz - mz, kx, mz)) base = shade(base, 0.72); // tape shadow edge
   // wall contact shadow
   const dw = Math.min(gz + ZB, XW - ax);
@@ -313,6 +344,13 @@ function seatColor(r, u, kind, t, x, y, hx, hz) {
     c = rf < 0.5 ? shade(conc, 1.05) : shade(conc, 0.82);
   } else if (aisle) {                                // aisle stairs
     c = rf < 0.25 ? shade(conc, 1.1) : shade(conc, 0.78);
+  } else if (TH.flowers && r < 0.42) {               // grass: flower boxes along the front of each stand
+    const fh = hash2(x >> 1, y >> 1, 31);
+    c = fh < 0.18 ? hex('#8a6bb0') : fh < 0.26 ? hex('#efe9f4') : fh < 0.62 ? hex('#2f6a34') : hex('#24552b');
+  } else if (kind === 1 && row <= 1 && hx > PBOX.x0 && hx < PBOX.x1) {   // players' box: lighter padded seats + front panel
+    if (row === 0 && rf < 0.3) c = rf < 0.06 ? hex(TH.accent) : hex(TH.wall);
+    else if (cf < 0.1) c = shade(hex(TH.wallLite), 0.7);
+    else c = rf > 0.7 ? shade(hex(TH.wallLite), 0.85) : hex(TH.wallLite);
   } else {
     const sc = hex(row < 4 ? TH.seat2 : TH.seat);
     if (rf < 0.2) c = shade(conc, 0.78);             // riser

@@ -25,5 +25,5 @@ export const SPONSORS = [
 export const THEMES = {
   hard: { wall: '#14275a', wallLite: '#2a428a', text: '#f2f5fb', accent: '#f2c230', seat: '#1e2742', seat2: '#1e2742', brands: ['KORVA', 'NIMBLO', 'AEROLY'], concrete: '#8d95a3', led: '#ffb347' },
   clay: { wall: '#10402e', wallLite: '#1f6048', text: '#f4f1e6', accent: '#e9e2c8', seat: '#1b2b25', seat2: '#1b2b25', brands: ['KORVA', 'SOLIVO', 'TANDEL'], concrete: '#9a9a94', led: '#ffd27a' },
-  grass: { wall: '#16391f', wallLite: '#26583a', text: '#f1f4ea', accent: '#b9a3d6', seat: '#202e28', seat2: '#43375e', brands: ['BLUMO', 'KORVA', 'PRIMAX'], concrete: '#9a9d98', led: '#e8f2c0' },
+  grass: { flowers: true, wall: '#16391f', wallLite: '#26583a', text: '#f1f4ea', accent: '#b9a3d6', seat: '#202e28', seat2: '#43375e', brands: ['BLUMO', 'KORVA', 'PRIMAX'], concrete: '#9a9d98', led: '#e8f2c0' },
 };

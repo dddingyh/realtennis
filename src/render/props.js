@@ -3,13 +3,16 @@ import { COURT } from '../config.js';
 import { camera } from './camera.js';
 import { PixBuf, hex, rgba, shade, mix } from './raster.js';
 import { STAGE, THEMES } from './stage.js';
+import { drawPixText, textWidth } from './font.js';
 
 const W = camera.W, H = camera.H;
 const POST_X = COURT.doublesHalfWidth + 0.914; // 6.399
 const NET_TOP_C = COURT.netHeightCenter, NET_TOP_P = COURT.netHeightPost;
 const NET_ROW = camera.project(0, 0.5, 0).sy;
 const UMP_X = 7.15;            // umpire chair right beside the umpire-side (right) net post
-const CHAIR_X = 9.3, CHAIR_Z = 3.0; // players' chairs either side of the umpire chair, facing the court   // screen row through the net plane (mid height)
+// Player benches: one per player either side of the umpire chair, outside the doubles sideline, facing the court.
+// Long axis runs along z (parallel to the sideline). 1.8 m long, 0.5 m seat depth, seat 0.45 m, low back to 0.95 m.
+const BENCH = { x0: 7.95, len: 2.0, depth: 0.5, seatH: 0.45, backH: 0.92, backT: 0.1, zc: 3.1 };
 
 export function netTopAt(x) {
   const ax = Math.abs(x);
@@ -51,6 +54,16 @@ export function renderNetLayer(surface = 'hard') {
     // strap
     if (Math.abs(wx) < 0.045) { for (let sy = yTop + 2; sy <= yBot; sy++) pb.set(sx, sy, WHITE); }
   }
+  // made-up wordmark bands printed on the net near each end (between centre strap and singles sticks)
+  for (const sg of [-1, 1]) {
+    const xa = sg * 2.15, xb = sg * 4.75;
+    const ya = (x) => netTopAt(x) - 0.05, yb = (x) => netTopAt(x) - 0.29;
+    const pts = [[xa, ya(xa)], [xb, ya(xb)], [xb, yb(xb)], [xa, yb(xa)]].map(([x, y]) => { const q = P(x, y, 0); return [q.sx, q.sy]; });
+    pb.poly(pts, rgba(...[0, 0, 0].map((v, i) => [hex(TH.wall) & 255, (hex(TH.wall) >>> 8) & 255, (hex(TH.wall) >>> 16) & 255][i]), 225));
+    const word = TH.brands[2];
+    const cx = P((xa + xb) / 2, 0, 0).sx, cy = P((xa + xb) / 2, (ya((xa + xb) / 2) + yb((xa + xb) / 2)) / 2, 0).sy;
+    drawPixText(pb, word, Math.round(cx - textWidth(word) / 2), Math.round(cy - 3.5), hex(TH.text), 1);
+  }
   // singles sticks
   for (const sgn of [-1, 1]) {
     const gx = sgn * COURT.netPostX;
@@ -69,10 +82,12 @@ export function renderNetLayer(surface = 'hard') {
     const w = Math.max(3, Math.round(0.13 * a.scale));
     const xs = Math.round(a.sx - w / 2);
     const ys = Math.round(b.sy), ye = Math.round(a.sy);
-    pb.rect(xs, ys, w, ye - ys + 1, hex('#2c3240'));
-    pb.rect(xs, ys, 1, ye - ys + 1, hex('#5d6a82'));
-    pb.rect(xs + w - 1, ys, 1, ye - ys + 1, hex('#161a22'));
-    pb.rect(xs, ys + 2, w, 2, hex(TH.wallLite));
+    // padded post cover in the theme colour with a light band
+    pb.rect(xs, ys, w, ye - ys + 1, hex(TH.wall));
+    pb.rect(xs, ys, 1, ye - ys + 1, hex(TH.wallLite));
+    pb.rect(xs + w - 1, ys, 1, ye - ys + 1, shade(hex(TH.wall), 0.6));
+    pb.rect(xs, ys + 2, w, 2, hex(TH.text));
+    pb.rect(xs, ye - 3, w, 1, hex(TH.accent));
     pb.rect(xs - 1, ys - 1, w + 2, 2, hex('#3b4354'));
     pb.rect(xs, ys - 1, w, 1, hex('#6f7c96'));
     // net strap anchor
@@ -81,7 +96,7 @@ export function renderNetLayer(surface = 'hard') {
   }
   drawUmpireChair(pb, TH);
   // near-side (z > 0) courtside items live in the net layer so they draw in front of the net/umpire chair
-  playerChair(pb, CHAIR_X, CHAIR_Z, TH);
+  playerBench(pb, +1, TH);
   person(pb, -6.0, 0.45, { ...ballKid(TH), skin: '#f1c9a5', hair: '#c8a24a', crouch: true });
   return pb;
 }
@@ -267,70 +282,101 @@ function box(pb, x, y, z, w, h, d, c) {
 }
 const ballKid = (TH) => ({ shirt: TH.wallLite, shorts: '#1c2236', skin: '#e0a97c', hair: '#3b2415' });
 
-// Courtside player chair seen side-on, facing the court (screen left), with drinks cooler, towel box and racket bag.
-function playerChair(pb, x, z, TH) {
-  const wall = hex(TH.wall), lite = hex(TH.wallLite), white = hex('#f2f2ea');
-  const at = (dx, dz) => { const q = P(x + dx, 0, z + dz); return { x: Math.round(q.sx), y: Math.round(q.sy), k: q.scale }; };
-  const k = at(0, 0).k, m = (v) => Math.max(1, Math.round(v * k));
-  // shadow under the whole group
-  const g = at(0.1, 0);
-  pb.ellipse(g.x + m(0.15), g.y, m(0.9), Math.max(2, m(0.16)), rgba(0, 0, 0, 70), true);
-  // drinks cooler / small table (wall side of the chair)
-  {
-    const c = at(0.85, -0.15), w = m(0.46), h = m(0.6);
-    pb.rect(c.x - (w >> 1), c.y - h, w, h, hex('#e9ecf1'));
-    pb.rect(c.x - (w >> 1), c.y - h, w, m(0.08), lite);
-    pb.rect(c.x - (w >> 1) + w - 1, c.y - h, 1, h, hex('#b9bec8'));
-    pb.rect(c.x - (w >> 1), c.y - 2, w, 2, hex('#9aa0ab'));
-    pb.rect(c.x - (w >> 1) + 2, c.y - Math.round(h * 0.55), w - 4, 1, hex('#c9ced6'));
-    // bottles
-    const bw = Math.max(2, m(0.07)), bh = m(0.24);
-    [[-0.12, '#cfe6f5'], [0.0, '#f2c230'], [0.12, '#cfe6f5']].forEach(([ox, col]) => {
-      const bx = c.x + m(ox) - (bw >> 1);
-      pb.rect(bx, c.y - h - bh, bw, bh, hex(col)); pb.rect(bx, c.y - h - bh, bw, 1, shade(hex(col), 0.6));
-      pb.rect(bx + bw - 1, c.y - h - bh + 1, 1, bh - 1, shade(hex(col), 0.8));
-    });
+// ---------- small 3D helpers (flat-shaded boxes, planar text) ----------
+const CAM = camera.pos;
+const proj2 = (x, y, z) => { const q = P(x, y, z); return [q.sx, q.sy]; };
+export function quad3(pb, pts, c) { pb.poly(pts.map((q) => proj2(q[0], q[1], q[2])), c); }
+// axis-aligned box; draws only the faces the camera can see, far faces first
+export function box3(pb, x0, x1, y0, y1, z0, z1, col, opt = {}) {
+  const c = hex(col);
+  const side = opt.side != null ? hex(opt.side) : shade(c, 0.82), end = opt.end != null ? hex(opt.end) : shade(c, 0.68), top = opt.top != null ? hex(opt.top) : shade(c, 1.18);
+  if (CAM.x < x0) quad3(pb, [[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]], side);
+  else if (CAM.x > x1) quad3(pb, [[x1, y0, z0], [x1, y0, z1], [x1, y1, z1], [x1, y1, z0]], side);
+  if (CAM.z > z1) quad3(pb, [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], end);
+  if (CAM.y > y1) quad3(pb, [[x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1]], top);
+}
+const maskCache = new Map();
+export function textMask(str, font = 'small', pad = 1) {
+  const key = str + '|' + font + '|' + pad;
+  let m = maskCache.get(key); if (m) return m;
+  const fh = font === 'big' ? 14 : 7;
+  const w = textWidth(str, 1, font) + pad * 2, h = fh + pad * 2;
+  const pb = new PixBuf(w, h);
+  drawPixText(pb, str, pad, pad, 0xffffffff, 1, { font });
+  m = { w, h, on: (u, v) => pb.px[v * w + u] !== 0 };
+  maskCache.set(key, m); return m;
+}
+// paint text onto the vertical plane x = xc (reads left->right with +z, i.e. as seen from the court side x < xc)
+export function textOnPlaneX(pb, xc, z0, z1, y0, y1, str, col, font = 'small', flip = false) {
+  const m = textMask(str, font, 1), c = hex(col);
+  const pts = [proj2(xc, y0, z0), proj2(xc, y0, z1), proj2(xc, y1, z1), proj2(xc, y1, z0)];
+  const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
+  for (let py = Math.floor(Math.min(...ys)); py <= Math.ceil(Math.max(...ys)); py++) {
+    for (let px = Math.floor(Math.min(...xs)); px <= Math.ceil(Math.max(...xs)); px++) {
+      const d = camera.rayDir(px + 0.5, py + 0.5);
+      if (Math.abs(d.x) < 1e-6) continue;
+      const t = (xc - CAM.x) / d.x; if (t <= 0) continue;
+      const y = CAM.y + t * d.y, z = CAM.z + t * d.z;
+      if (y < y0 || y > y1 || z < z0 || z > z1) continue;
+      let u = (z - z0) / (z1 - z0); if (flip) u = 1 - u;
+      const tu = Math.floor(u * m.w), tv = Math.floor((y1 - y) / (y1 - y0) * m.h);
+      if (tu >= 0 && tv >= 0 && tu < m.w && tv < m.h && m.on(tu, tv)) pb.set(px, py, c);
+    }
   }
-  // chair
-  {
-    const c = at(0, 0);
-    const seatH = m(0.48), legC = hex('#2a2f3a');
-    const fx = c.x - m(0.28), bx = c.x + m(0.22);
-    pb.rect(fx, c.y - seatH, 2, seatH, legC); pb.rect(bx, c.y - seatH, 2, seatH, legC);
-    pb.rect(fx + 1, c.y - Math.round(seatH * 0.35), bx - fx, 1, shade(legC, 1.3));          // stretcher
-    // padded seat cushion
-    const sw = m(0.6), sh = Math.max(3, m(0.11));
-    pb.rect(fx - 2, c.y - seatH - sh, sw + 2, sh, wall);
-    pb.rect(fx - 1, c.y - seatH - sh, sw, 1, lite);
-    pb.rect(fx - 2, c.y - seatH - sh + 1, 1, sh - 2, shade(lite, 0.9));
-    pb.rect(fx - 2, c.y - seatH - 1, sw + 2, 1, shade(wall, 0.6));
-    // padded backrest (away from the court)
-    const bh = m(0.72), bwid = Math.max(4, m(0.14)), bTop = c.y - seatH - sh - bh;
-    pb.rect(bx - 1, bTop, bwid, bh + 1, wall);
-    pb.rect(bx - 1, bTop, 1, bh, lite);
-    pb.rect(bx - 1 + bwid - 1, bTop, 1, bh, shade(wall, 0.65));
-    pb.rect(bx - 1, bTop, bwid, 1, lite);
-    // white piping + towel over the backrest
-    pb.rect(bx - 2, bTop + 1, Math.max(2, m(0.1)), Math.round(bh * 0.45), white);
-    pb.rect(bx - 2, bTop + 1, 1, Math.round(bh * 0.45), hex('#c9ccd2'));
+}
+
+// Player bench seen from the camera: fitted cover in the theme colour, sponsor wordmark on the low backrest,
+// racket bag + towels on the seat, drinks fridge with bottles at the end away from the umpire chair.
+function playerBench(pb, side, TH) {   // side: +1 near-side bench (z>0), -1 far-side bench
+  // Reads as "long padded seat + low back" even foreshortened: light seat-top plane, open gap under the seat
+  // (short legs + floor shadow), a visible gap between seat and backrest, a white towel and a black racket bag
+  // breaking the silhouette. Small dark drinks fridge tucked on the wall side at the far end.
+  const { x0, len, depth, seatH, backH, backT } = BENCH;
+  const zc = side * BENCH.zc, z0 = zc - len / 2, z1 = zc + len / 2;
+  const wall = hex(TH.wall), lite = hex(TH.wallLite);
+  const xb = x0 + depth + 0.04;                   // backrest front plane (small gap behind the seat)
+  const umpEnd = side > 0 ? z0 : z1;
+  const cushT = 0.1, legC = '#22262f';
+  const seatTop = mix(lite, hex('#ffffff'), 0.22);  // clearly lighter seat-top plane
+  const fridge = () => {
+    // small, dark, on the wall side beyond the bench end (never between the bench and the camera)
+    const fx0 = xb + backT + 0.12, fx1 = fx0 + 0.42;
+    const fz0 = side > 0 ? z1 - 0.5 : z0 + 0.08, fz1 = fz0 + 0.42;
+    box3(pb, fx0, fx1, 0, 0.62, fz0, fz1, '#2a2f3a', { side: '#20242d', end: '#191c23', top: '#3d4452' });
+    // small glass door on the court-facing side with a few bottles
+    quad3(pb, [[fx0 - 0.001, 0.14, fz0 + 0.07], [fx0 - 0.001, 0.14, fz1 - 0.07], [fx0 - 0.001, 0.5, fz1 - 0.07], [fx0 - 0.001, 0.5, fz0 + 0.07]], hex('#14202c'));
+    for (let r = 0; r < 2; r++) for (let k = 0; k < 3; k++) {
+      const yy = 0.18 + r * 0.17, zz = fz0 + 0.1 + k * 0.08;
+      quad3(pb, [[fx0 - 0.002, yy, zz], [fx0 - 0.002, yy, zz + 0.04], [fx0 - 0.002, yy + 0.11, zz + 0.04], [fx0 - 0.002, yy + 0.11, zz]], hex(['#9cc8e6', '#f2c230', '#9cc8e6'][k]));
+    }
+    quad3(pb, [[fx0 - 0.002, 0.52, fz0], [fx0 - 0.002, 0.52, fz1], [fx0 - 0.002, 0.56, fz1], [fx0 - 0.002, 0.56, fz0]], lite);
+  };
+  // floor shadow under the whole bench (dark band visible through the open legs)
+  quad3(pb, [[x0 + 0.02, 0.002, z0 + 0.05], [xb + backT + 0.18, 0.002, z0 + 0.05], [xb + backT + 0.18, 0.002, z1 + 0.18], [x0 + 0.02, 0.002, z1 + 0.18]], rgba(0, 0, 0, 95));
+  if (side < 0) fridge();
+  // short legs (4 under the seat, 2 posts carrying the backrest)
+  const legH = seatH - cushT;
+  for (const zz of [z0 + 0.08, z1 - 0.12]) {
+    box3(pb, x0 + 0.06, x0 + 0.1, 0, legH, zz, zz + 0.04, legC);
+    box3(pb, xb - 0.08, xb - 0.04, 0, legH, zz, zz + 0.04, legC);
+    box3(pb, xb + 0.02, xb + 0.06, legH, backH - 0.1, zz, zz + 0.04, legC);
   }
-  // racket bag lying on the court side of the chair
-  {
-    const c = at(-0.75, 0.25), w = m(0.85), h = Math.max(3, m(0.2));
-    pb.rect(c.x - (w >> 1), c.y - h, w, h, hex('#1b1e26'));
-    pb.rect(c.x - (w >> 1) + 1, c.y - h, w - 2, 1, hex('#3a404e'));
-    pb.rect(c.x - (w >> 1) + Math.round(w * 0.2), c.y - h + Math.round(h / 2), Math.round(w * 0.6), 1, hex(TH.accent));
-    pb.rect(c.x - 2, c.y - h - 1, 4, 1, white);
-  }
-  // towel box (in front of the chair)
-  {
-    const c = at(-0.1, 0.8), w = m(0.36), h = m(0.42);
-    pb.rect(c.x - (w >> 1), c.y - h, w, h, shade(wall, 0.85));
-    pb.rect(c.x - (w >> 1), c.y - h, w, 1, lite);
-    pb.rect(c.x - (w >> 1) + w - 1, c.y - h, 1, h, shade(wall, 0.6));
-    pb.rect(c.x - (w >> 1) + 1, c.y - h - Math.max(2, m(0.07)), w - 2, Math.max(2, m(0.07)), white);
-    pb.rect(c.x - (w >> 1) + 1, c.y - h - Math.max(2, m(0.07)), w - 2, 1, hex('#ffffff'));
-  }
+  // seat cushion: theme-colour sides, light top, accent piping on the front edge
+  box3(pb, x0, xb - 0.02, legH, seatH, z0, z1, TH.wall, { side: shade(wall, 0.95), end: shade(wall, 0.7), top: seatTop });
+  quad3(pb, [[x0 - 0.001, seatH - 0.022, z0], [x0 - 0.001, seatH - 0.022, z1], [x0 - 0.001, seatH, z1], [x0 - 0.001, seatH, z0]], hex(TH.accent));
+  // low padded backrest floating above the seat (gap shows the shadowed rail behind)
+  const by0 = seatH + 0.12;
+  box3(pb, xb, xb + backT, by0, backH, z0, z1, TH.wall, { side: wall, end: shade(wall, 0.7), top: seatTop });
+  quad3(pb, [[xb - 0.001, backH - 0.025, z0], [xb - 0.001, backH - 0.025, z1], [xb - 0.001, backH, z1], [xb - 0.001, backH, z0]], hex(TH.accent));
+  textOnPlaneX(pb, xb - 0.002, z0 + 0.25, z1 - 0.25, by0 + 0.04, backH - 0.05, TH.brands[1], TH.text, 'small');
+  // racket bag lying on the seat at the umpire end
+  const bz0 = side > 0 ? umpEnd + 0.08 : umpEnd - 0.88, bz1 = bz0 + 0.8;
+  box3(pb, x0 + 0.08, x0 + 0.36, seatH, seatH + 0.14, bz0, bz1, '#16181e', { top: '#343a47', side: '#1f222a' });
+  quad3(pb, [[x0 + 0.079, seatH + 0.055, bz0 + 0.1], [x0 + 0.079, seatH + 0.055, bz1 - 0.1], [x0 + 0.079, seatH + 0.085, bz1 - 0.1], [x0 + 0.079, seatH + 0.085, bz0 + 0.1]], hex(TH.accent));
+  // white towel draped over the backrest (hangs down the front, over the top)
+  const tz = side > 0 ? zc + 0.2 : zc - 0.55;
+  box3(pb, xb - 0.03, xb + backT + 0.02, seatH + 0.16, backH + 0.03, tz, tz + 0.34, '#f2f2ea', { side: '#ecece5', end: '#c9ccd2', top: '#ffffff' });
+  if (side > 0) fridge();
 }
 
 // Background-layer people/props (everything behind the net plane or never overlapping it).
@@ -339,8 +385,8 @@ export function drawStaticPeople(pb, surface = 'hard') {
   const TH = THEMES[surface] || THEMES.hard;
   const K = ballKid(TH);
   const { ZB } = STAGE;
-  // far-side player chair (other side of the umpire chair)
-  playerChair(pb, CHAIR_X, -CHAIR_Z, TH);
+  // far-side player bench (other side of the umpire chair)
+  playerBench(pb, -1, TH);
   // net-cord sensor box clipped to the umpire-side post
   box(pb, 6.5, 0, -0.05, 0.24, 0.2, 0.2, hex('#2a303c'));
   // net ball kid on the far side of the net at the umpire-side post (seen through the mesh)

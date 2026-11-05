@@ -4,6 +4,7 @@ import { camera } from './camera.js';
 import { renderBackground } from './court.js';
 import { renderNetLayer, drawStaticPeople } from './props.js';
 import { Crowd } from './crowd.js';
+import { VenueDynamics, buildBackLayer, buildFrontLayer, FRONT_Z, cropLayer } from './venue.js';
 import { SpriteFactory, SPRITE_SERVE_Q } from './sprites.js';
 import { ellipseSpans, hex, css, rgba } from './raster.js';
 import { viewBasis } from './char_model.js';
@@ -37,15 +38,39 @@ export class Renderer {
     drawStaticPeople(pb, surface);
     this.bgCanvas = pb.flush();
     this.netLayer = renderNetLayer(surface).flush();
+    this.backLayer = cropLayer(buildBackLayer(surface));
+    this.frontLayer = cropLayer(buildFrontLayer(surface));
+    if (!this.venue) this.venue = new VenueDynamics();
+    this.venue.setSurface(surface);
   }
 
   // react to sim events (visual part)
+  // Also classifies "big points" (ace, 15+ shot rally, break of serve, set/match) -> crowd wave / standing
+  // ovation; `this.bigPoint` (0..1, consumed by main.js) lets the audio scale the applause.
   onEvents(events, state) {
+    this.venue?.onEvents(events, state);
+    this.bigPoint = 0;
     for (const e of events) {
       if (e.type === 'bounce' && e.pos) this.spawnPuff(e.pos, e.in);
-      else if (e.type === 'point') this.crowd.onPoint(e.winner === 0 ? 1 : 0.6);
-      else if (e.type === 'call' && e.text === 'ACE') this.crowd.onPoint(0.9);
-      else if (e.type === 'hit' && e.quality > 0.85) this.crowd.onPoint(0.25);
+      else if (e.type === 'serve') { this.rally = 0; this.serverAtPoint = e.by; }
+      else if (e.type === 'hit' && !e.serve) { this.rally = (this.rally || 0) + 1; if (e.quality > 0.85) this.crowd.onPoint(0.25); }
+      else if (e.type === 'point') {
+        this.crowd.onPoint(e.winner === 0 ? 1 : 0.6);
+        const rally = this.rally || 0;
+        if (rally >= 15) { this.crowd.ovation(1); this.bigPoint = Math.max(this.bigPoint, 1); }
+        else if (rally >= 10) { this.crowd.ovation(0.5); this.bigPoint = Math.max(this.bigPoint, 0.6); }
+        if (e.reason === 'ace') { this.crowd.ovation(0.45); this.bigPoint = Math.max(this.bigPoint, 0.5); }
+        this.lastPointWinner = e.winner;
+      } else if (e.type === 'call' && e.text === 'ACE') this.crowd.onPoint(0.9);
+      else if (e.type === 'score' && (e.text === 'GAME' || e.text === 'SET' || e.text === 'MATCH')) {
+        const server = this.serverAtPoint ?? state?.match?.server;
+        const brk = e.text === 'GAME' && this.lastPointWinner != null && server != null && this.lastPointWinner !== server;
+        if (e.text !== 'GAME' || brk) {
+          this.crowd.wave();
+          this.crowd.ovation(e.text === 'GAME' ? 0.6 : 1);
+          this.bigPoint = Math.max(this.bigPoint, e.text === 'GAME' ? 0.7 : 1);
+        }
+      }
     }
   }
 
@@ -75,6 +100,11 @@ export class Renderer {
     // crowd
     this.crowd.update(dt, time);
     ctx.drawImage(this.crowd.pb.canvas, 0, 0);
+    // back wall: live LED ribbon, then things standing in front of it, then the far shot clock digits
+    this.venue.update(state, dt);
+    this.venue.drawLED(ctx, state);
+    ctx.drawImage(this.backLayer.canvas, this.backLayer.x, this.backLayer.y);
+    this.venue.drawClock(ctx, 0);
 
     const b = state.ball;
     // ----- ground decals: ball marks -----
@@ -100,6 +130,7 @@ export class Renderer {
     // ----- entities sorted by depth (z ascending = far first) -----
     const items = [];
     items.push({ z: 0, kind: 'net' });
+    items.push({ z: FRONT_Z, kind: 'front' });
     for (let i = 0; i < 2; i++) items.push({ z: state.players[i].pos.z, kind: 'player', i });
     if (b.visible) {
       // a tossed/struck serve above the server's head is drawn over the server (it is above, not behind, the body)
@@ -110,6 +141,7 @@ export class Renderer {
     items.sort((p, q) => p.z - q.z);
     for (const it of items) {
       if (it.kind === 'net') ctx.drawImage(this.netLayer, 0, 0);
+      else if (it.kind === 'front') { ctx.drawImage(this.frontLayer.canvas, this.frontLayer.x, this.frontLayer.y); this.venue.drawClock(ctx, 1); }
       else if (it.kind === 'player') this.drawPlayer(ctx, state, it.i, dt, time);
       else this.drawBall(ctx, b, dt, state);
     }

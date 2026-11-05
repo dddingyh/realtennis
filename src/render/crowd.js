@@ -5,6 +5,8 @@ import { PixBuf, hex, shade, mulberry32, rgba, mix } from './raster.js';
 
 const { XW, ZB, BH, S, ROW, SEAT, TOPH } = STAGE;
 const SHIRTS = ['#1f2a44', '#1f2a44', '#15161b', '#15161b', '#e6e3da', '#e6e3da', '#c9b89a', '#7d8696', '#2f3b57', '#8a4a4a', '#3c6a6a', '#b9b2a0', '#232831'].map(hex);
+const HATS = ['#f2f2ea', '#f2f2ea', '#e9dcc0', '#1f2a44', '#c8a24a', '#7d8696'].map(hex);
+export const PBOX = { x0: -6.6, x1: -2.4 };   // players' box seats (back tier, front rows)
 const SKINS = ['#f1c9a5', '#e0a97c', '#c98a5b', '#9a6038', '#6e4228', '#f7dcc2'].map(hex);
 const HAIR = ['#1a1410', '#3b2415', '#6b4423', '#c8a24a', '#8a8a8a', '#a33a1e', '#111111'].map(hex);
 
@@ -19,6 +21,9 @@ export class Crowd {
 
   build(seed) {
     const rnd = mulberry32(seed);
+    const shadowed = (x, z) => x - 0.45 * z - 7.0 > 0;
+    const sun = (x, z, row) => !shadowed(x, z) && row < 5;
+    const pbox = (x, z, kind, row) => kind === 1 && row <= 1 && x > PBOX.x0 && x < PBOX.x1;
     const list = [];
     const add = (x, y, z, kind, row) => {
       const p = camera.project(x, y, z);
@@ -27,13 +32,16 @@ export class Crowd {
         sx: Math.round(p.sx), sy: Math.round(p.sy), k: p.scale, depth: p.depth, kind,
         shirt: SHIRTS[(rnd() * SHIRTS.length) | 0], skin: SKINS[(rnd() * SKINS.length) | 0], hair: HAIR[(rnd() * HAIR.length) | 0],
         ph: rnd() * 6.28, sp: 0.6 + rnd() * 1.4, thr: rnd(), big: rnd() < 0.18, sz: 0.88 + rnd() * 0.25, flash: 0,
-        hat: rnd() < 0.08 ? SHIRTS[(rnd() * SHIRTS.length) | 0] : 0, skipped: rnd() < 0.14,
+        // caps / sun hats mostly in the sunlit section; players' box (behind the far baseline, left) is sparser and smarter
+        hat: rnd() < (sun(x, z, row) ? 0.22 : 0.05) ? HATS[(rnd() * HATS.length) | 0] : 0,
+        skipped: rnd() < (pbox(x, z, kind, row) ? 0.4 : 0.14),
+        shades: rnd() < (sun(x, z, row) ? 0.2 : 0.05),
         dark: (row >= 5 ? 0.74 : 1) * (shadowed(x, z) ? 0.78 : 1),
-        cloth: (rnd() * 5) | 0, hairStyle: (rnd() * 6) | 0, inner: SHIRTS[(rnd() * SHIRTS.length) | 0], shades: rnd() < 0.12,
+        cloth: (rnd() * 5) | 0, hairStyle: (rnd() * 6) | 0, inner: SHIRTS[(rnd() * SHIRTS.length) | 0],
       });
     };
     const rows = Math.floor((TOPH - BH) / S / ROW);
-    const shadowed = (x, z) => x - 0.45 * z - 7.0 > 0;
+
     for (let r = 0; r < rows; r++) {
       if (r === 4) continue;
       const dist = (r + 0.5) * ROW, y = BH + S * dist;
@@ -61,9 +69,15 @@ export class Crowd {
   }
 
   onPoint(strength = 1) { this.excite = Math.min(1, Math.max(this.excite, strength)); }
+  // standing ovation (big points): fraction of the crowd on its feet, decays over a few seconds
+  ovation(strength = 1) { this.ov = Math.min(1, Math.max(this.ov || 0, strength)); }
+  // Mexican wave sweeping across the stands (left -> right)
+  wave() { this.waveT = 0; }
 
   update(dt, time) {
     this.excite = Math.max(0, this.excite - dt * 0.4);
+    this.ov = Math.max(0, (this.ov || 0) - dt * 0.16);
+    if (this.waveT != null) { this.waveT += dt; if (this.waveT > 4.2) this.waveT = null; }
     const step = Math.floor(time * 10);
     if (step === this.lastStep) return false;
     this.lastStep = step;
@@ -82,7 +96,9 @@ export class Crowd {
       const detail = bw >= 7;                     // enough pixels for shoulders/arms/hair styles
       let lift = 0;
       if (Math.sin(time * s.sp * 2 + s.ph) > 0.92) lift = 1;
-      const up = ex > s.thr ? (ex > s.thr + 0.25 || s.big ? 2 : 1) : 0;
+      let up = ex > s.thr ? (ex > s.thr + 0.25 || s.big ? 2 : 1) : 0;
+      if (this.ov > s.thr * 0.9) up = 2;
+      if (this.waveT != null) { const crest = -120 + this.waveT * (camera.W + 240) / 3.6; if (Math.abs(s.sx - crest) < 34) up = 2; }
       const cheering = up > 0 && ((Math.floor(time * 6 + s.ph) & 1) === 0 || up === 2);
       if (cheering) lift += Math.round(0.14 * k) * (up === 2 ? 1 : 0.6) | 0;
       const x0 = s.sx - (bw >> 1), yBot = s.sy - lift + 1, yTop = yBot - bh;
