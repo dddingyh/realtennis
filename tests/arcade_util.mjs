@@ -46,7 +46,7 @@ export function doServe(sim, { offsetMs = 0, power = 0.9, source = 'keyboard' } 
   const srv = sim.match.server;
   sim.swing(srv, { source });
   stepWhile(sim, () => sim.sv.stage !== 'flight');
-  stepTo(sim, sim.sv.tApex + offsetMs / 1000);
+  stepTo(sim, sim.sv.tIdeal + offsetMs / 1000);
   sim.swing(srv, { power, source });
   flush(sim);
   return srv;

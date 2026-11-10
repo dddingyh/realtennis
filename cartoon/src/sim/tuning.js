@@ -34,14 +34,20 @@ export const SMASH_Y = 3.05;
 export const TIMING = { prep: 1.25, pointOver: 1.7, changeover: 2.6, matchOver: 4, serveRetry: 0.8 };
 
 // ---- stamina
-export const STAMINA = { rush: 0.17, drain: 0.16, jog: 0.006, rest: 0.010, between: 0.35 };
+export const STAMINA = { rush: 0.4, drain: 0.16, jog: 0.006, rest: 0.010, between: 0.35 };
 
 // ---- serve
 export const SERVE = {
   raise: 0.42,                      // swing 1 -> release of the ball (s)
   releaseY: 2.0, apexY: 3.05,       // release height / apex height of the toss
-  catchAfter: 0.42,                 // no hit this long after the apex => toss is wasted (re-toss, no fault)
-  contactBack: 0.12,                // contact point is this far inside the baseline
+  catchAfter: 0.30,                 // no hit this long after the ideal contact => toss is wasted (re-toss, no fault)
+  contactBack: 0.12,
+  contactY: 2.775,                  // ideal contact height (after the apex on the way down; reachable with the jump)
+  releaseFwd: 0.35,                 // toss hand / release point in front of the feet
+  contactFwd: 0.45,                 // ball in front of the feet-at-contact (0.35..0.55)
+  contactLat: 0.17,                 // toward the racket-arm side (0.10..0.25)
+  jumpLead: 0.16, jumpY: 0.24,      // take-off this long before the ideal contact; jump height at contact
+  stepIn: 0.42, stepTime: 0.40,     // forward step into the court during the jump
 };
 
 // ---- timing -> lateral target curve: x = AIM_X * (1 - (1 - |dir|)^AIM_CURVE); a moderate timing offset already
@@ -59,7 +65,7 @@ export const RUSH_ACC = 12.5;          // acceleration while sprinting to the ne
 export const NET_PRESSURE = 2.2;     // extra scatter factor (x(1+this)) for passing shots against a fully set net player
 export const PRESSURE_REACT = 0.2;  // s of extra (or fewer) reaction time for a ball with pressure 1 (0 = average ball at 0.35)
 export const PRESSURE_Q = 0.2;         // quality loss for a reply to a maximum-pressure ball
-export const PRESSURE_NET = 7.0;       // multiplier of both pressure effects when the hitter is following the ball to the net
+export const PRESSURE_NET = 9.5;       // multiplier of both pressure effects when the hitter is following the ball to the net
 
 // ---- how far behind the hip line a ball can still be struck (fwd < 0 = behind the body)
 export const FWD_CLEAN = -0.5;     // cleanly struck down to here

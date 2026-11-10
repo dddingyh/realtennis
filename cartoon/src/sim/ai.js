@@ -77,9 +77,9 @@ export class AIBrain {
         if (u < S.wideServe * (first ? 1 : 0.5)) x = g.boxSign * r.range(3.0, 3.55);       // wide
         else if (u < S.wideServe * (first ? 1 : 0.5) + 0.38) x = g.boxSign * r.range(0.55, 1.0);   // T
         else x = g.boxSign * r.range(1.8, 2.5);                                              // body
-        const power = first ? clamp(S.serveP + r.gauss(0, 0.05), 0.4, 1) : clamp(0.5 + r.gauss(0, 0.05), 0.3, 0.7);
+        const power = first ? clamp(S.serveP - 0.1 + r.gauss(0, 0.05), 0.4, 1) : clamp(0.5 + r.gauss(0, 0.05), 0.3, 0.7);
         const off = sim.serveTimingForAim(this.i, x) / 1000 + r.gauss(0, this.sigmaT * 0.9);
-        this.hitAt = Math.max(sv.tRel + 0.06, sv.tApex + off);
+        this.hitAt = Math.max(sv.tRel + 0.06, sv.tIdeal + off);
         this.servePower = power;
       }
       if (sv.stage === 'flight' && now >= this.hitAt) {
@@ -166,7 +166,7 @@ export class AIBrain {
 
 /** Level -> behaviour mapping (calibrated by tests/arcade_compete.mjs). */
 export const AI_TUNE = {
-  sigmaMin: 0.002, sigmaRange: 0.085, sigmaExp: 1.2,
+  sigmaMin: 0.002, sigmaRange: 0.085, sigmaExp: 1.0,
   tacticLo: 0.55, tacticHi: 1.0,
   aimLo: 0.70, aimHi: 1.0,
   reactLo: 0.24, reactHi: 0.08,

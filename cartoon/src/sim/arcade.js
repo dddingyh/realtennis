@@ -409,7 +409,7 @@ export class ArcadeSim {
     this.faultCount = 0;
     this.rl = { live: false, hitter: m.server, serve: false, shots: 0, lastHitTime: this.time, cord: false, valid: false, firstBounce: false, crossed: false };
     for (const p of this.P) {
-      p.plan = null; p.sw = null; p.cooldown = 0; p.wantNet = false; p.deep = false; p.hold = null; p.netThisPoint = false; p.approachThisPoint = false;
+      p.plan = null; p.sw = null; p.cooldown = 0; p.wantNet = false; p.deep = false; p.serveJump = null; p.y = 0; p.hold = null; p.netThisPoint = false; p.approachThisPoint = false;
       p.zone = 'base'; p.anim.emote = null; p.splitUntil = 0;
     }
     const pos = this._servePositions();
@@ -429,7 +429,7 @@ export class ArcadeSim {
     this.phaseEnd = this.time + this.timing.serveRetry;
     this.sv = { stage: 'wait' };
     this.rl = { live: false, hitter: this.match.server, serve: false, shots: 0, lastHitTime: this.time, cord: false, valid: false, firstBounce: false, crossed: false };
-    for (const p of this.P) { p.plan = null; p.sw = null; p.cooldown = 0; p.reactUntil = 0; }
+    for (const p of this.P) { p.plan = null; p.sw = null; p.cooldown = 0; p.reactUntil = 0; p.serveJump = null; p.y = 0; }
     this._holdBall();
     this.emit({ type: 'phase', phase: 'serve-prep' });
   }
@@ -447,7 +447,7 @@ export class ArcadeSim {
   _tossPoint(srv, u) {
     const e = 1 - (1 - u) * (1 - u);
     const x = srv.pos.x - srv.handX * 0.22;
-    const z = srv.pos.z - srv.facing * 0.62;
+    const z = srv.pos.z - srv.facing * K.SERVE.releaseFwd;
     this.b.pos.x = x; this.b.pos.z = z; this.b.pos.y = lerp(0.95, K.SERVE.releaseY, e);
   }
 
@@ -553,12 +553,13 @@ export class ArcadeSim {
     }
     if (sv.stage === 'flight') {
       const tau = this.time - sv.tRel;
-      b.pos.x = sv.x; b.pos.z = sv.z;
+      b.pos.x = sv.x0 + sv.vx * tau; b.pos.z = sv.z0 + sv.vz * tau;
       b.pos.y = K.SERVE.releaseY + sv.vy0 * tau - 0.5 * G * tau * tau;
-      b.vel.y = sv.vy0 - G * tau; b.vel.x = b.vel.z = 0;
-      if (this.time > sv.tApex + K.SERVE.catchAfter) {
+      b.vel.y = sv.vy0 - G * tau; b.vel.x = sv.vx; b.vel.z = sv.vz;
+      if (this.time > sv.tIdeal + K.SERVE.catchAfter) {
         // toss wasted: catch it, re-toss without penalty
         this.sv = { stage: 'wait' };
+        srv.serveJump = null; srv.y = 0; srv.walkTo = this._servePositions().srv;
         this.srvAnimReset(srv);
         this._holdBall();
         this.emit({ type: 'whiff', by: srv.i, reason: 'toss' });
@@ -576,9 +577,17 @@ export class ArcadeSim {
       sv.tRel = this.time + K.SERVE.raise;
       sv.vy0 = Math.sqrt(2 * G * (K.SERVE.apexY - K.SERVE.releaseY));
       sv.tApex = sv.tRel + sv.vy0 / G;
-      sv.x = p.pos.x - p.handX * 0.22 + p.handX * 0.0;
-      sv.z = p.pos.z - p.facing * 0.62;
-      p.serveAnim = { t0: this.time, hit: null };
+      const J = K.SERVE;
+      // ideal contact: slightly after the apex on the way down, at J.contactY (reachable with the jump)
+      sv.tIdeal = sv.tApex + Math.sqrt(2 * (J.apexY - J.contactY) / G);
+      sv.jumpT0 = sv.tIdeal - J.jumpLead;
+      sv.x0 = p.pos.x - p.handX * 0.22; sv.z0 = p.pos.z - p.facing * J.releaseFwd;
+      const dT = sv.tIdeal - sv.tRel;
+      const xc = p.pos.x + p.handX * J.contactLat;
+      const zc = p.pos.z - p.facing * (this._serveStep(J.jumpLead) + J.contactFwd);       // 0.35-0.55 m in front of the feet at contact
+      sv.vx = (xc - sv.x0) / dT; sv.vz = (zc - sv.z0) / dT;
+      p.serveJump = { t0: sv.jumpT0, z0: p.pos.z };
+      p.serveAnim = { t0: this.time, hit: null, contact: { lat: J.contactLat, fwd: J.contactFwd, h: J.contactY } };
       this.emit({ type: 'toss', by: p.i });
       return true;
     }
@@ -587,17 +596,24 @@ export class ArcadeSim {
     return this._serveHit(p, o, ts, src);
   }
 
+  /** forward step (m, toward the net) of the server during the serve jump, tau seconds after take-off */
+  _serveStep(tau) { const u = clamp(tau / K.SERVE.stepTime, 0, 1); return K.SERVE.stepIn * u * u * (3 - 2 * u); }
+  _serveJumpY(tau) {
+    const L = K.SERVE.jumpLead, v = (K.SERVE.jumpY + 0.5 * G * L * L) / L;
+    return tau <= 0 ? 0 : Math.max(0, v * tau - 0.5 * G * tau * tau);
+  }
+
   _serveHit(p, o, ts, src) {
     const sv = this.sv, m = this.match;
     const first = this.faultCount === 0;
     const win = src === 'remote' ? K.REMOTE : { T_MISS: K.T_MISS, T_PERFECT: K.T_PERFECT };
-    const t = ts - (sv.tApex - this._lagUsed);
+    const t = ts - (sv.tIdeal - this._lagUsed);
     const power = clamp(o.power ?? 0.75, 0, 1);
     const g = this._serveGeom(p);
     const stats = this.stats;
     if (first) { stats.firstServes[p.i]++; }
     const tau = this.time - sv.tRel;          // the ball is hit where it really is now (timing was judged at ts): no teleport
-    const pos = { x: sv.x, y: K.SERVE.releaseY + sv.vy0 * tau - 0.5 * G * tau * tau, z: sv.z };
+    const pos = { x: sv.x0 + sv.vx * tau, y: K.SERVE.releaseY + sv.vy0 * tau - 0.5 * G * tau * tau, z: sv.z0 + sv.vz * tau };
     const now = this.time;
     p.serveAnim.hit = ts;
     // air ball
@@ -621,12 +637,13 @@ export class ArcadeSim {
     const aimC = clamp(aim, -1, 1);
     let tx = g.cx + aimC * g.half;
     if (Math.abs(aim) > 1) tx = g.cx + sgn(aim) * (g.half + (Math.abs(aim) - 1) * 3);
+    const fHs = 1 - 0.55 * clamp((Math.abs(pos.y - K.SERVE.contactY) - 0.25) / 0.6, 0, 1);   // contact more than 0.25 m off the ideal height: weak serve
     const power1 = first ? power : Math.min(power, 0.62);
     const dm = first ? lerp(1.35, 0.55, power) : lerp(1.7, 1.15, power);
     const tz = g.side * (COURT.serviceLineDist - dm);
-    let speed = (first ? lerp(104, 160, power) : lerp(84, 114, power1)) * (0.8 + 0.2 * fT) * stamF / KMH;
+    let speed = (first ? lerp(104, 160, power) : lerp(84, 114, power1)) * (0.8 + 0.2 * fT * fHs) * stamF / KMH;
     const top = (first ? 650 : 3000) * Math.PI / 30;
-    const q = clamp(fT * stamF, 0, 1);
+    const q = clamp(fT * stamF * fHs, 0, 1);
     const risk = first ? (0.7 + 0.6 * power) : 0.55;
     const sd = (0.2 + 1.7 * Math.pow(1 - q, 1.3)) * risk;
     const sl = (0.12 + 1.3 * Math.pow(1 - q, 1.3)) * risk;
@@ -651,10 +668,10 @@ export class ArcadeSim {
     this.lastShot = shot;
     p.lastQ = q;
     p.serveAnim.contactPos = pos;
+    p.serveAnim.contact = { lat: (pos.x - p.pos.x) * p.handX, fwd: (pos.z - p.pos.z) * -p.facing, h: pos.y };
     this.emit({ type: 'hit', by: p.i, shot: shot.shot, side: 'fh', timing: label, timingMs: shot.timingMs, dir: shot.dir, aim: shot.aim, power, quality: q, speedKmh: spd,
       pos: { x: pos.x, y: pos.y, z: pos.z }, serve: true, mishit: shot.mishit, first });
     this._afterHit(p, null);
-    p.vy = 2.6; p.y = 0.0;
     if (p.wantNet) { this._zone(p, 'toNet'); this._noteApproach(p); }
     return true;
   }
@@ -1013,6 +1030,19 @@ export class ArcadeSim {
     const az = Math.abs(p.pos.z);
     if (p.zone === 'toNet' && az <= K.NET_ARRIVE) this._zone(p, 'net');
     else if (p.zone === 'toBase' && az >= HALF - 1.2) this._zone(p, 'base');
+    // ---- serve jump: leaves the ground ~0.16 s before the ideal contact, steps into the court, lands ~0.3 s after it
+    if (p.serveJump) {
+      const sj = p.serveJump, tau = time - sj.t0;
+      const L = K.SERVE.jumpLead, vJ = (K.SERVE.jumpY + 0.5 * G * L * L) / L;
+      if (tau > 2 * vJ / G + 0.02) { p.serveJump = null; p.y = 0; p.vy = 0; p.vel.z = 0; }
+      else if (tau >= 0) {
+        const z1 = sj.z0 - p.facing * this._serveStep(tau);
+        p.vel.z = (z1 - p.pos.z) / h; p.vel.x = 0;
+        p.pos.z = z1; p.y = this._serveJumpY(tau); p.vy = 0;
+        this._animate(p, h, Math.abs(p.vel.z), 'idle', time);
+        return;
+      }
+    }
     // ---- integrate
     let dx = 0, dz = 0, dist = 0, dvx = 0, dvz = 0;
     if (target) {
@@ -1045,7 +1075,7 @@ export class ArcadeSim {
     if (sgn(p.pos.z) !== p.facing || Math.abs(p.pos.z) < 0.8) p.pos.z = p.facing * 0.8;
     p.pos.x = clamp(p.pos.x, -9, 9); p.pos.z = clamp(p.pos.z, -19, 19);
     // jump (smash / serve)
-    if (p.vy !== 0 || p.y > 0) { p.vy -= G * h; p.y += p.vy * h; if (p.y <= 0) { p.y = 0; p.vy = 0; } }
+    if (!p.serveJump && (p.vy !== 0 || p.y > 0)) { p.vy -= G * h; p.y += p.vy * h; if (p.y <= 0) { p.y = 0; p.vy = 0; } }
     // ---- stamina
     const r = sp / K.VMAX;
     if (live && sp > 1) p.stamina = clamp(p.stamina - (K.STAMINA.drain * Math.max(0, r - 0.45) * 1.8 + K.STAMINA.jog * r) * h, 0, 1);
@@ -1093,7 +1123,7 @@ export class ArcadeSim {
       const sa = p.serveAnim;
       if (sa.hit === null && this.sv.stage !== 'wait') {
         name = 'toss';
-        phase = clamp((time - this.sv.t0) / (this.sv.tApex - this.sv.t0), 0, 1);
+        phase = clamp((time - this.sv.t0) / (this.sv.tIdeal - this.sv.t0), 0, 1);
       } else if (sa.hit !== null) {
         const u = (time - sa.hit) / 0.55;
         if (u < 1) { name = 'serve'; phase = 0.65 + 0.35 * clamp(u, 0, 1); }
@@ -1128,7 +1158,10 @@ export class ArcadeSim {
     else { a.shot = null; a.side = null; }
     // contact / prep
     const pl = p.plan;
-    if (name === 'swing' && sw && sw.contact) a.contact = sw.contact;
+    if ((name === 'toss' || name === 'serve') && p.serveAnim && p.serveAnim.contact) {
+      const sc = p.serveAnim.contact;
+      a.contact = (name === 'toss' && p.serveJump) ? { lat: sc.lat, fwd: sc.fwd - 0, h: sc.h } : sc;
+    } else if (name === 'swing' && sw && sw.contact) a.contact = sw.contact;
     else if (pl && !pl.expired) {
       const loc = this._local(p, pl.side, p.pos, pl.P);
       a.contact = { lat: loc.lat, fwd: loc.fwd, h: loc.h };
@@ -1164,8 +1197,8 @@ export class ArcadeSim {
     H_.side = hp.plan ? hp.plan.side : (hp.anim.side || 'fh');
     if (this.phase === 'serving' && m.server === hi) {
       if (this.sv.stage === 'wait') { H_.canServe = true; H_.text = '挥拍抛球'; }
-      else if (this.sv.stage === 'raise') { H_.tossUp = true; H_.canServe = true; H_.contactIn = Math.max(0, (this.sv.tApex - this._lagSim(hp) - this.time) / this.timeScale); H_.text = '球到最高点时挥拍'; }
-      else if (this.sv.stage === 'flight') { H_.tossUp = true; H_.canServe = true; H_.contactIn = Math.max(0, (this.sv.tApex - this._lagSim(hp) - this.time) / this.timeScale); H_.text = '球到最高点时挥拍'; }
+      else if (this.sv.stage === 'raise') { H_.tossUp = true; H_.canServe = true; H_.contactIn = Math.max(0, (this.sv.tIdeal - this._lagSim(hp) - this.time) / this.timeScale); H_.text = '球到最高点时挥拍'; }
+      else if (this.sv.stage === 'flight') { H_.tossUp = true; H_.canServe = true; H_.contactIn = Math.max(0, (this.sv.tIdeal - this._lagSim(hp) - this.time) / this.timeScale); H_.text = '球到最高点时挥拍'; }
     } else if (this.phase === 'serve-prep' && m.server === hi) { H_.text = '准备发球'; }
     else if (this.phase === 'rally' && hp.plan && !hp.plan.swing && !hp.plan.expired && this.time <= hp.plan.tContact + 0.3) {
       H_.contactIn = (hp.plan.tContact - this._lagSim(hp) - this.time) / this.timeScale;

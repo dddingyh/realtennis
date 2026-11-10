@@ -356,7 +356,7 @@ console.log('phone latency model');
     stepWhile(sim, () => sim.sv.stage !== 'flight');
     let tz = null;
     for (let k = 0; k < 300 && tz === null; k++) { stepOnce(sim); if (sim.state.hint.i === srv && sim.state.hint.contactIn !== null && sim.state.hint.contactIn <= 0) tz = sim.time; }
-    const gap = tz === null ? null : (sim.sv.tApex - tz) / TS * 1000;
+    const gap = tz === null ? null : (sim.sv.tIdeal - tz) / TS * 1000;
     const arrive = grid(tz + lag / 1000 * TS);
     stepTo(sim, arrive);
     sim.swing(srv, { source: 'remote', ageMs: lag, power: 0.9 });
@@ -432,20 +432,52 @@ console.log('serve');
   const xs = [-100, -50, 0, 50, 100].map((off) => { const sm = mkSim({ seed: 3 }); doServe(sm, { offsetMs: off, power: 0.8 }); return sm.lastShot.target.x; });
   console.log('   serve target x for apex offset -100..+100 ms: ' + xs.map(f2).join(' '));
   check('serve direction is monotone in timing', xs.every((x, k) => k === 0 || x < xs[k - 1]) || xs.every((x, k) => k === 0 || x > xs[k - 1]));
+  // serve geometry at the ideal hit: reachable for the character (ball in front of the feet-at-contact, 2.70-2.85 m, jumping)
+  {
+    const gm = [];
+    for (const [hand, idx] of [['R', 0], ['L', 0], ['R', 1]]) {
+      const s2 = mkSim({ seed: 12 + idx, hand0: hand, hand1: hand, firstServer: idx });
+      stepWhile(s2, () => s2.phase !== 'serving');
+      const srv = s2.match.server;
+      s2.swing(srv, { source: 'keyboard' });
+      const pre = s2.P[srv].anim.contact ? { ...s2.P[srv].anim.contact } : null;
+      stepWhile(s2, () => s2.sv.stage !== 'flight');
+      stepTo(s2, s2.sv.tIdeal);
+      const P = s2.P[srv];
+      const yJump = P.y, planned = P.anim.contact ? { ...P.anim.contact } : null;
+      const feet = { x: P.pos.x, z: P.pos.z }, startZ = s2.sv.z0 + P.facing * 0.35;
+      s2.swing(srv, { power: 0.9 });
+      const e = s2.drainEvents().find((x) => x.type === 'hit');
+      const fwd = (e.pos.z - feet.z) * -P.facing, lat = (e.pos.x - feet.x) * P.handX;
+      gm.push({ hand, fwd, lat, h: e.pos.y, yJump, step: Math.abs(feet.z - startZ), plannedOK: planned && Math.abs(planned.fwd - fwd) < 0.1 && Math.abs(planned.h - e.pos.y) < 0.1, c: P.anim.contact });
+    }
+    console.log('   serve contact (fwd, lat, height, jump y, step in): ' + gm.map((g) => `${g.hand}: ${f2(g.fwd)} ${f2(g.lat)} ${f2(g.h)} ${f2(g.yJump)} ${f2(g.step)}`).join(' | '));
+    check('ideal serve hit: ball 0.35-0.55 m in front of the feet-at-contact, 2.70-2.85 m high, racket-side 0.10-0.25 m, server in the air (y >= 0.18)',
+      gm.every((g) => g.fwd >= 0.35 && g.fwd <= 0.55 && g.h >= 2.70 && g.h <= 2.85 && g.lat >= 0.10 && g.lat <= 0.25 && g.yJump >= 0.18));
+    check('server steps 0.1-0.5 m into the court while jumping; anim.contact was planned from the toss (matches the real hit)', gm.every((g) => g.step >= 0.1 && g.step <= 0.5 && g.plannedOK));
+    // jump profile: leaves the ground, lands again, and the server then continues normally
+    const s3 = mkSim({ seed: 12 });
+    doServe(s3, { offsetMs: 0, power: 0.9 });
+    const ys = []; for (let k = 0; k < 120; k++) { stepOnce(s3); ys.push(s3.P[s3.match.server].y); }
+    check('jump: y rises to ~0.25 m and the server is back on the ground within ~0.35 s of the hit', Math.max(...ys) >= 0.2 && Math.max(...ys) < 0.35 && ys[ys.length - 1] === 0, `max y ${f2(Math.max(...ys))}`);
+    // early/late serve hits stay where the ball is: weaker when the height is off
+    const hts = [-120, 0, 120].map((off) => { const s4 = mkSim({ seed: 12 }); doServe(s4, { offsetMs: off, power: 0.9 }); return { off, h: s4.lastShot.speedKmh, y: s4.log.find((e) => e.type === 'hit').pos.y }; });
+    check('contact height follows the ball: early hit higher, late hit lower, ideal in the clean band', hts[0].y > hts[1].y && hts[2].y < hts[1].y && Math.abs(hts[1].y - 2.775) < 0.08, hts.map((x) => f2(x.y)).join(' / '));
+  }
   // second serve
   const sm = mkSim({ seed: 4 });
-  doServe(sm, { offsetMs: 400 });                                    // air ball -> fault
+  doServe(sm, { offsetMs: 270 });                                    // air ball -> fault
   stepWhile(sm, () => sm.phase !== 'serving');
   check('a bad first serve is a fault and the second serve is offered', sm.faultCount === 1 && sm.log.some((e) => e.type === 'call' && e.text === 'FAULT'));
   const first = []; const second = [];
   for (let s = 0; s < 8; s++) {
     const a = mkSim({ seed: 700 + s }); doServe(a, { offsetMs: 0, power: 1 }); first.push(a.lastShot.speedKmh);
-    const b = mkSim({ seed: 700 + s }); doServe(b, { offsetMs: 400 }); stepWhile(b, () => b.phase !== 'serving'); doServe(b, { offsetMs: 0, power: 1 }); second.push(b.lastShot.speedKmh);
+    const b = mkSim({ seed: 700 + s }); doServe(b, { offsetMs: 270 }); stepWhile(b, () => b.phase !== 'serving'); doServe(b, { offsetMs: 0, power: 1 }); second.push(b.lastShot.speedKmh);
   }
   check('the second serve is automatically safer (slower, more spin)', mean(second) < mean(first) * 0.8, `${f1(mean(second))} vs ${f1(mean(first))} km/h`);
   // double fault
   const df = mkSim({ seed: 4 });
-  doServe(df, { offsetMs: 400 }); stepWhile(df, () => df.phase !== 'serving'); doServe(df, { offsetMs: 400 });
+  doServe(df, { offsetMs: 270 }); stepWhile(df, () => df.phase !== 'serving'); doServe(df, { offsetMs: 270 });
   stepWhile(df, () => df.phase === 'rally');
   check('double fault gives the point to the receiver', df.log.some((e) => e.type === 'call' && e.text === 'DOUBLE FAULT') && df.stats.doubleFaults[0] + df.stats.doubleFaults[1] === 1 && df.stats.points[1] === 1 && df.stats.points[0] === 0);
 }

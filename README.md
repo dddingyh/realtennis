@@ -50,6 +50,25 @@ node tests/e2e.mjs
 
 `e2e.mjs` 需要本机已安装 Playwright 和 Chromium。
 
+## 3D 卡通版（`cartoon/`）
+
+仓库里还有一个 3D 卡通风格的版本，入口是 `cartoon/index.html`，像素版菜单里也有链接。它专为“手机当球拍”设计：
+
+- **挥拍时机决定左右方向**：早挥 = 把球拉向身体另一侧，晚挥 = 推出去（右手正手：早 → 左，晚 → 右；反手相反）。球周围有一个收缩的时机圈，每次击球后提示“早 / 准 / 晚”和偏差毫秒数。
+- **自动跑位**，正反手自动选择；挥拍轨迹决定击球方式（向上 = 上旋，水平快挥 = 平击，向下 = 切削，陡直向上 = 挑高球；网前自动变成截击和扣杀）。
+- **一键上网**：手机上的大按钮（键盘 `W` / `↑` / `Shift`）在上网和回底线之间切换。时机好（打出压迫球之后）上网很占优，无脑上网会被挑高球和穿越球惩罚。
+- **发球**：挥一下抛球，再挥一下击球。
+- **AI 对手**有四种风格（底线相持、压迫进攻、上网型、变化型）和可调难度，遵守和玩家相同的规则。
+- 键盘也能玩：空格 / `J` 上旋，`K` 平击，`L` 切削，`I` 挑高球。
+
+手机手柄的说明见 [docs/ARCADE_CONTROLLER.md](docs/ARCADE_CONTROLLER.md)，模块接口约定见 [docs/ARCADE.md](docs/ARCADE.md)。卡通版的测试：
+
+```bash
+for t in tests/arcade_core.mjs tests/arcade_match.mjs tests/arcade_compete.mjs tests/arcade_ctl.test.mjs; do node "$t" || echo "FAIL $t"; done
+```
+
+卡通版使用 three.js r170（MIT，已放在 `vendor/three/`），需要浏览器支持 WebGL。
+
 ## 已知限制
 
 - 挥拍识别的阈值是用合成传感器数据调的，换到真机上的准确率还没验证过，建议先做手柄里的“挥拍校准”。

@@ -181,6 +181,7 @@ export class BallView {
     }
     // glow
     this.glow.position.set(p.x, p.y, p.z); this.glow.scale.setScalar(r * 5.2);
+    this.glow.material.opacity = ball.attach ? 0.12 : 0.55;   // held ball: no halo shining through the server's body
     // ground shadow decal
     const h = Math.max(0, p.y);
     const sr = (0.075 + 0.0046 * dist) * (1 + h * 0.05);
