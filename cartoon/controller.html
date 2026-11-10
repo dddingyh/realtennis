@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#7fdcff">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>手机球拍</title>
+<link rel="stylesheet" href="css/controller.css">
+</head>
+<body>
+
+<!-- 状态栏：每个界面都可见（信令 / 找主机 / 点对点 + 延迟） -->
+<header id="statusbar">
+  <div class="sb-row">
+    <div class="pill" id="conn-pill"><i></i><span id="conn-text">连接中…</span></div>
+    <div class="rtt" id="rtt">— ms</div>
+    <button class="icon-btn" id="btn-settings" aria-label="设置">⚙</button>
+  </div>
+  <div class="sb-steps" id="conn-steps">
+    <span data-s="sig">① 信令</span><span data-s="host">② 找主机</span><span data-s="p2p">③ 点对点</span>
+    <em id="conn-msg"></em>
+  </div>
+</header>
+
+<main id="app">
+
+  <!-- 0 欢迎 / 环境检查 -->
+  <section class="screen" id="s-intro">
+    <div class="logo">
+      <svg viewBox="0 0 120 120" class="logo-svg" aria-hidden="true">
+        <g transform="rotate(-28 60 60)">
+          <rect x="54" y="68" width="12" height="44" rx="6" fill="#ff8a2b" stroke="#1c2340" stroke-width="4"/>
+          <ellipse cx="60" cy="38" rx="28" ry="34" fill="#fff9e6" stroke="#1c2340" stroke-width="5"/>
+          <path d="M60 6V70M34 24H86M32 40H88M36 56H84M44 12L44 66M76 12L76 66" stroke="#7fdcff" stroke-width="2.5" fill="none"/>
+        </g>
+        <circle cx="92" cy="92" r="14" fill="#e9ff3b" stroke="#1c2340" stroke-width="4"/>
+        <path d="M82 86C88 92 96 92 102 86" stroke="#1c2340" stroke-width="3" fill="none" stroke-linecap="round"/>
+      </svg>
+      <h1>手机球拍</h1>
+      <p class="sub">把手机当球拍，挥一挥就能打！</p>
+    </div>
+    <div class="card warn" id="secure-bad" hidden>
+      <h2>需要 HTTPS 才能用传感器</h2>
+      <p>浏览器只在<b>安全页面（HTTPS）</b>里开放陀螺仪。当前地址不是 HTTPS，手机传感器用不了。</p>
+      <ul>
+        <li>请扫描<b>游戏画面上的二维码</b>，用部署在 GitHub Pages（<code>https://…</code>）的页面打开。</li>
+        <li>局域网 <code>http://192.168.x.x</code> 地址<b>无效</b>（iOS 和 Android 都不行）。</li>
+        <li>电脑上调试可在地址后加 <code>&amp;sim=1</code> 使用传感器模拟器。</li>
+      </ul>
+    </div>
+    <div class="card ok" id="secure-ok" hidden></div>
+    <ol class="card howto">
+      <li><b>握住手机</b>，像握球拍：屏幕是拍面，顶端是拍头</li>
+      <li><b>球飞来时挥一下</b>：挥得越狠，球越快</li>
+      <li><b>挥得早 / 晚</b>决定球打向左 / 右，向上挥是上旋</li>
+      <li>大按钮：<b>上网</b>冲到网前，<b>回底线</b>退回来</li>
+    </ol>
+    <label class="field" id="room-field" hidden>
+      <span>房间号</span>
+      <input id="room-input" inputmode="latin" autocapitalize="characters" autocomplete="off" maxlength="8" placeholder="游戏画面上的 6 位房间号">
+    </label>
+    <div class="spacer"></div>
+    <button class="btn primary huge" id="btn-start">开始</button>
+    <p class="hint" id="intro-hint"></p>
+    <button class="link" id="btn-demo" hidden>不连接，只试试手感</button>
+  </section>
+
+  <!-- 1 惯用手 -->
+  <section class="screen" id="s-hand" hidden>
+    <h2 class="step">你用哪只手握手机？</h2>
+    <div class="two">
+      <button class="btn choice" data-hand="L"><span class="big-glyph">左</span>左手</button>
+      <button class="btn choice" data-hand="R"><span class="big-glyph">右</span>右手</button>
+    </div>
+    <div class="card how">
+      <svg viewBox="0 0 300 140" aria-label="握法示意" id="grip-svg"></svg>
+      <p>像握网球拍一样握住手机<b>下端</b>，屏幕当拍面，手机顶端是拍头。<br>不用校准，直接开打。</p>
+    </div>
+  </section>
+
+  <!-- 2 试挥（可选） -->
+  <section class="screen" id="s-warm" hidden>
+    <h2 class="step">挥两下试试</h2>
+    <p class="hint">像打球一样往前挥一下手机，下面会显示识别结果（可选）。</p>
+    <div class="card warm-card" id="warm-card">
+      <div class="warm-shot" id="warm-shot">?</div>
+      <div class="warm-meta" id="warm-meta">等你挥拍…</div>
+      <div class="meter"><i id="warm-power"></i></div>
+      <div class="warm-dots" id="warm-dots"><b></b><b></b></div>
+    </div>
+    <p class="hint small">挥得越用力，球越快；向上挥是上旋，平着挥是平击，向下切是切削，往上捞是挑高。</p>
+    <div class="spacer"></div>
+    <button class="btn primary huge" id="btn-warm-go">进入比赛</button>
+    <button class="link" id="btn-warm-skip">跳过</button>
+  </section>
+
+  <!-- 3 比赛 -->
+  <section class="screen play" id="s-play" hidden>
+    <div class="scorebar">
+      <div class="srv" id="srv">等待开赛</div>
+      <div class="pt" id="pt">—</div>
+      <button class="icon-btn" id="btn-pause" aria-label="暂停">⏸</button>
+    </div>
+
+    <div class="fbcard" id="fbcard">
+      <div class="fb-main" id="fb-main">挥拍！</div>
+      <div class="fb-ms" id="fb-ms">看你挥得准不准</div>
+      <div class="fb-row">
+        <svg class="fb-arrow" id="fb-arrow" viewBox="-30 -30 60 60" aria-label="方向"><g id="fb-arrow-g"><path d="M0 24V-10M-14 -2L0 -20L14 -2" fill="none" stroke="currentColor" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/></g></svg>
+        <span class="chip shot" id="fb-shot">—</span>
+      </div>
+      <div class="stars" id="fb-stars" aria-label="击球质量"></div>
+      <div class="fb-local" id="fb-local"></div>
+    </div>
+
+    <div class="serve-prompt" id="serve-prompt" hidden></div>
+
+    <div class="chips" id="chips">
+      <button class="chip hold" data-shot="topspin">上旋</button>
+      <button class="chip hold" data-shot="flat">平击</button>
+      <button class="chip hold" data-shot="slice">切削</button>
+      <button class="chip hold" data-shot="lob">挑高</button>
+      <button class="chip tog" id="tog-snd" aria-pressed="true">声音</button>
+      <button class="chip tog" id="tog-vib" aria-pressed="true">震动</button>
+    </div>
+    <p class="hint small" id="chip-hint">按住上面的球路，同时挥拍＝强制本次球路</p>
+
+    <button class="net-btn" id="btn-net" data-zone="base">
+      <svg class="net-ico" viewBox="0 0 64 64" aria-hidden="true">
+        <rect x="6" y="22" width="52" height="26" rx="4" fill="#fff" fill-opacity=".35" stroke="currentColor" stroke-width="4"/>
+        <path d="M6 35H58M19 22V48M32 22V48M45 22V48" stroke="currentColor" stroke-width="3"/>
+        <path id="net-arrow" d="M32 4V16M26 10L32 4L38 10" stroke="currentColor" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span class="net-text"><span class="net-title" id="net-title">上网</span><span class="net-sub" id="net-sub">冲到网前截击</span></span>
+    </button>
+
+    <div class="overlay" id="pause-overlay" hidden>
+      <div class="ov-card"><h2>已暂停</h2><button class="btn primary huge" id="btn-resume">继续比赛</button></div>
+    </div>
+    <div class="overlay soft" id="offline-overlay" hidden>
+      <div class="ov-card small"><b id="offline-title">连接中断</b><span id="offline-msg">正在重连，挥拍暂时发不出去…</span></div>
+    </div>
+  </section>
+
+  <!-- 设置 -->
+  <div class="sheet" id="sheet" hidden>
+    <div class="sheet-body">
+      <h2>设置</h2>
+      <div class="setting"><span>惯用手</span><div class="seg" id="set-hand"><button data-v="L">左</button><button data-v="R">右</button></div></div>
+      <div class="setting"><span>震动反馈<small id="vib-note">安卓可用；iPhone 不支持震动</small></span><div class="seg" id="set-vib"><button data-v="0">关</button><button data-v="1">开</button></div></div>
+      <div class="setting"><span>声音</span><div class="seg" id="set-snd"><button data-v="0">关</button><button data-v="1">开</button></div></div>
+      <div class="setting col">
+        <span>挥拍时刻校正 <b id="adj-val">0 ms</b>
+          <small>总是显示“晚”→向右调（提前）；总是“早”→向左调（延后）</small></span>
+        <input type="range" id="set-adj" min="-150" max="150" step="5" value="0">
+        <div class="row"><button class="btn small" id="btn-adj-auto" disabled>按最近平均值校正</button><button class="btn small" id="btn-adj-zero">归零</button></div>
+        <small id="adj-stat">最近还没有击球数据</small>
+      </div>
+      <div class="setting"><span>手机倾角方向反了？<small>某些 iOS 机型重力符号相反（挑高↔切削对调时试试）</small></span><div class="seg" id="set-sign"><button data-v="1">正常</button><button data-v="-1">反转</button></div></div>
+      <div class="setting col"><button class="btn" id="btn-rewarm">再试挥几下</button></div>
+      <pre class="debug" id="debug" hidden></pre>
+      <button class="btn primary" id="btn-sheet-close">返回</button>
+    </div>
+  </div>
+
+  <!-- 传感器模拟器 (?sim=1) -->
+  <aside class="simpanel" id="simpanel" hidden>
+    <button class="sim-title" id="sim-title">传感器模拟器 ▾</button>
+    <div class="sim-body" id="sim-body">
+      <div class="sim-row" id="sim-shots">
+        <button data-shot="topspin">1 上旋</button><button data-shot="flat">2 平击</button><button data-shot="slice">3 切削</button><button data-shot="lob">4 挑高</button>
+      </div>
+      <div class="sim-row" id="sim-speed"><button data-v="0.7">轻</button><button data-v="1" class="on">中</button><button data-v="1.35">重</button></div>
+      <button class="btn small" id="sim-swing">挥拍（空格）</button>
+      <button class="btn small" id="sim-net">上网 / 回底线（N）</button>
+      <div class="sim-row"><label><input type="checkbox" id="sim-bh"> 反手</label><label><input type="checkbox" id="sim-hz"> 100Hz</label><label><input type="checkbox" id="sim-walk"> 走路</label></div>
+      <small>数字键 1–4 = 直接挥该球路；P = 暂停</small>
+    </div>
+  </aside>
+</main>
+
+<div class="landscape" id="landscape"><div>请竖屏握持手机<br><small>横屏时按钮会变形，转回竖屏即可</small></div></div>
+<div class="toast" id="toast" hidden></div>
+<script type="module" src="src/controller/app.js"></script>
+</body>
+</html>

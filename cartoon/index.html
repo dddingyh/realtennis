@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>卡通网球 · 街机版</title>
+<meta name="description" content="手机当球拍的卡通 3D 街机网球：挥拍时机决定球路。">
+<link rel="stylesheet" href="css/style.css">
+<script type="importmap">{"imports":{"three":"../vendor/three/three.module.min.js"}}</script>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="hud" class="hidden"></div>
+<div id="popups"></div>
+<div id="banners"></div>
+<div id="menu" class="screen"></div>
+<div id="pause" class="screen hidden">
+  <div class="pause-card panel">
+    <h2>暂停</h2>
+    <div class="pause-btns">
+      <button class="big-btn" id="pResume">继续比赛</button>
+      <button class="big-btn alt" id="pRestart">重新开始</button>
+      <button class="big-btn alt" id="pMenu">返回菜单</button>
+    </div>
+    <div class="pause-help" id="pHelp"></div>
+  </div>
+</div>
+<div id="end" class="screen hidden"></div>
+<div id="loading" class="screen"><div class="spin"></div><b>加载球场中…</b></div>
+<div id="nogl" class="screen hidden">
+  <div class="pause-card panel"><h2>无法启动 3D</h2><p>你的浏览器或设备不支持 WebGL，或硬件加速被关闭。请换用较新的 Chrome / Edge / Safari / Firefox，并开启硬件加速。</p><p><a class="pixel-link" href="../index.html">先玩像素复古版 →</a></p></div>
+</div>
+<div id="perf" class="hidden"></div>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>

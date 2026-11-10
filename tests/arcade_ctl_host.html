@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>arcade ctl e2e host</title>
+<style>body{font:14px system-ui;background:#111;color:#ddd;padding:12px}#log{white-space:pre;font:12px monospace;max-height:260px;overflow:auto}</style></head>
+<body>
+<h3>Arcade controller e2e host (local transport)</h3>
+<div>room: <b id="room"></b> <span id="status"></span> <span id="mode"></span></div>
+<div id="url"></div>
+<div id="log"></div>
+<script type="module">
+// Minimal host: createRemoteHost + RemoteAdapter + a mock ArcadeSim (or the real one with ?real=1 when it exists).
+import { createRemoteHost } from '../src/net/host.js';
+import { RemoteAdapter } from '../cartoon/src/input/remote.js';
+const q = new URLSearchParams(location.search);
+const msgs = [], simCalls = [], stats = [];
+const log = (s) => { document.getElementById('log').textContent += s + '\n'; };
+
+// ---- mock sim: records calls, runs a tiny zone state machine, emits events on demand
+function makeMock() {
+  const events = [];
+  const sim = {
+    isMock: true,
+    state: { match: { phase: 'rally', pointText: '15-0', server: 1 }, players: [{ zone: 'base', hand: 'R', isHuman: true }, { zone: 'base', hand: 'R' }], hint: { i: 0, tossUp: false, canServe: false } },
+    swing(i, o) {
+      simCalls.push(['swing', i, { ...o }, performance.now()]);
+      // pretend contact classification from a test-controlled timing
+      const t = window.__mockTimingMs ?? -40;
+      events.push({ type: 'hit', by: i, shot: o.shot, side: o.side === 'bh' ? 'bh' : 'fh', timing: Math.abs(t) < 25 ? 'perfect' : Math.abs(t) > 140 ? 'wide' : t < 0 ? 'early' : 'late', timingMs: t, dir: Math.max(-1, Math.min(1, t / 140)), power: o.power, quality: window.__mockQuality ?? 0.7, speedKmh: 90 });
+    },
+    toggleNet(i) { simCalls.push(['toggleNet', i]); const p = sim.state.players[i]; const goNet = p.zone === 'base' || p.zone === 'toBase'; p.zone = goNet ? 'toNet' : 'toBase'; setTimeout(() => { p.zone = goNet ? 'net' : 'base'; }, 700); },
+    setNet(i, v) { simCalls.push(['setNet', i, v]); },
+    pause(b) { simCalls.push(['pause', b]); },
+    drainEvents() { return events.splice(0); },
+    emit(e) { events.push(e); },
+  };
+  return sim;
+}
+let sim = makeMock();
+if (q.get('real') === '1') {
+  try {
+    const mod = await import('../cartoon/src/sim/arcade.js');
+    const real = new mod.ArcadeSim({ surface: 'hard', timeScale: 0.8, seed: 5, players: [{ human: true, hand: 'R', name: '你' }, { human: false, hand: 'R', name: 'AI', ai: { level: 0.5, style: 'baseliner' } }] });
+    const sw = real.swing.bind(real);
+    real.swing = (i, o) => { simCalls.push(['swing', i, { ...o }, performance.now()]); return sw(i, o); };
+    sim = real; document.getElementById('mode').textContent = '(real ArcadeSim)';
+    let last = performance.now();
+    setInterval(() => { const n = performance.now(); real.step(Math.min(0.05, (n - last) / 1000)); last = n; }, 16);
+  } catch (e) { log('real ArcadeSim unavailable: ' + e); }
+} else document.getElementById('mode').textContent = '(mock sim)';
+
+let adapter = null;
+const host = createRemoteHost({
+  local: q.get('local') !== '0', roomCode: q.get('room') || undefined,
+  controllerBase: new URL('../cartoon/controller.html', location.href).href,
+  onMessage: (m) => { msgs.push(m); if (m.t !== 'tilt') log(JSON.stringify(m)); adapter && adapter.handle(m); },
+  onStatus: (s) => { stats.push(s); document.getElementById('status').textContent = s.state + (s.rttMs != null ? ' ' + s.rttMs + 'ms' : ''); },
+});
+adapter = new RemoteAdapter(sim, 0, host, { timingOffsetMs: Number(q.get('offset') || 0) });
+setInterval(() => adapter.notify(sim.drainEvents(), sim.state), 33);
+document.getElementById('room').textContent = host.roomCode;
+document.getElementById('url').textContent = host.controllerUrl;
+Object.assign(window, { __host: host, __msgs: msgs, __stats: stats, __sim: sim, __simCalls: simCalls, __adapter: adapter });
+</script></body></html>

@@ -19,6 +19,9 @@ export function normalizeRoomCode(s) {
   return c;
 }
 
+const ZONES = ['base', 'net', 'toNet', 'toBase'];
+const FB_TIMINGS = ['early', 'perfect', 'late', 'wide', 'whiff'];
+const FB_SHOTS = ['flat', 'topspin', 'slice', 'lob', 'volley', 'smash', 'serve'];
 const clamp = (x, lo, hi) => (x < lo ? lo : x > hi ? hi : x);
 const num = (x, d = 0) => (Number.isFinite(x) ? x : d);
 const optNum = (x, lo, hi) => (Number.isFinite(x) ? clamp(x, lo, hi) : undefined);
@@ -37,14 +40,22 @@ export function sanitize(m) {
         aimX: optNum(m.aimX, -1, 1), lift: optNum(m.lift, 0, 1), spin: optNum(m.spin, -1, 1), exec: optNum(m.exec, 0, 1),
         speedDps: optNum(m.speedDps, 0, 5000) };
     case 'btn': {
-      const ids = ['serve', 'pause', 'resume', 'shotOverride'];
+      const ids = ['serve', 'pause', 'resume', 'shotOverride', 'net'];   // 'net' = arcade one-button net rush (value true|false|'toggle')
       if (!ids.includes(m.id)) return null;
+      if (m.id === 'net') return { t: 'btn', id: 'net', value: m.value === true || m.value === false ? m.value : 'toggle' };
       return { t: 'btn', id: m.id, value: m.value };
     }
     case 'ping': return { t: 'ping', id: num(m.id), ts: num(m.ts) };
     case 'pong': return { t: 'pong', id: num(m.id), ts: num(m.ts), phoneTs: m.phoneTs === undefined ? undefined : num(m.phoneTs), hostTs: m.hostTs === undefined ? undefined : num(m.hostTs) };
     case 'welcome': return { t: 'welcome', v: num(m.v, 1), player: num(m.player, 0) };
-    case 'state': return { t: 'state', phase: String(m.phase || ''), pointText: String(m.pointText || ''), server: num(m.server, 0), youServe: !!m.youServe };
+    case 'state': return { t: 'state', phase: String(m.phase || ''), pointText: String(m.pointText || ''), server: num(m.server, 0), youServe: !!m.youServe,
+      // arcade additions (optional; the pixel controller ignores them)
+      zone: ZONES.includes(m.zone) ? m.zone : '', tossUp: !!m.tossUp, canServe: !!m.canServe, paused: !!m.paused };
+    case 'fb': // arcade swing feedback (host -> phone), one per human hit / whiff
+      return { t: 'fb', timing: FB_TIMINGS.includes(m.timing) ? m.timing : '', timingMs: clamp(num(m.timingMs), -2000, 2000),
+        shot: FB_SHOTS.includes(m.shot) ? m.shot : '', quality: clamp(num(m.quality, 0.5), 0, 1), dir: clamp(num(m.dir), -1, 1),
+        side: SIDES.includes(m.side) ? m.side : '', serve: !!m.serve, mishit: typeof m.mishit === 'string' ? m.mishit.slice(0, 24) : '',
+        speedKmh: optNum(m.speedKmh, 0, 400) };
     case 'haptic': return { t: 'haptic', pattern: Array.isArray(m.pattern) ? m.pattern.slice(0, 12).map((x) => clamp(num(x), 0, 1000)) : [] };
     default: return null;
   }

@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Character Dev</title>
+<script type="importmap">{"imports":{"three":"../vendor/three/three.module.min.js"}}</script>
+<style>
+  html,body{margin:0;height:100%;background:#8fb8d8;font:12px/1.3 system-ui,sans-serif;color:#102}
+  #c{position:fixed;inset:0;width:100%;height:100%}
+  #ui{position:fixed;left:8px;top:8px;background:#fffd;padding:8px;border-radius:8px;max-width:330px;z-index:2}
+  #ui label{display:block;margin:2px 0}
+  #ui select,#ui input[type=range]{width:200px}
+  body.hide #ui{display:none}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui"></div>
+<script type="module">
+import * as THREE from 'three';
+import { createCharacter, DEFAULT_LOOKS, getHandWorldPosition } from './src/view/character/index.js';
+
+const Q = new URLSearchParams(location.search);
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9cc4e4);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x8a9a7a, 1.5));
+const sun = new THREE.DirectionalLight(0xfff4e0, 2.4);
+sun.position.set(-4, 9, 5); sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -9, right: 9, top: 9, bottom: -9, near: 1, far: 30 });
+sun.shadow.bias = -0.0004;
+scene.add(sun);
+{
+  const g = new THREE.PlaneGeometry(60, 60); g.rotateX(-Math.PI / 2);
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const x = c.getContext('2d'); x.fillStyle = '#4e8f5a'; x.fillRect(0, 0, 64, 64); x.fillStyle = '#58a064'; x.fillRect(0, 0, 32, 32); x.fillRect(32, 32, 32, 32);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(30, 30); t.magFilter = THREE.NearestFilter;
+  const m = new THREE.Mesh(g, new THREE.MeshToonMaterial({ map: t })); m.receiveShadow = true; scene.add(m);
+}
+const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
+
+// ---- state
+const S = {
+  anim: Q.get('anim') || 'ready', shot: Q.get('shot') || 'topspin', side: Q.get('side') || 'fh',
+  phase: +(Q.get('phase') ?? 0.5), gait: +(Q.get('gait') ?? 0), reach: +(Q.get('reach') ?? 0),
+  hand: Q.get('hand') || 'R', look: +(Q.get('look') ?? 0), view: Q.get('view') || 'back',
+  play: Q.get('play') === '1', emote: Q.get('emote') || '', contact: Q.get('contact') !== '0', speed: +(Q.get('speed') ?? 0.7),
+  y: +(Q.get('y') ?? 0), zoom: +(Q.get('zoom') ?? 1),
+};
+const FACES = { back: [0, -1], front: [0, 1], side: [1, 0], side2: [-1, 0], three: [0.7, 0.7], threeb: [0.7, -0.7] };
+const NOMC = { topspin: [0.68, 0.45, 0.92], flat: [0.68, 0.45, 0.92], slice: [0.66, 0.46, 0.95], lob: [0.66, 0.4, 0.7], volley: [0.55, 0.5, 1.1], smash: [0.25, 0.4, 2.55], serve: [0.3, 0.62, 2.65] };
+const NOMB = { topspin: [-0.55, 0.38, 0.95], flat: [-0.55, 0.38, 0.95], slice: [-0.58, 0.4, 0.95], lob: [-0.58, 0.35, 0.7], volley: [-0.5, 0.5, 1.1] };
+
+function contactFor(shot, side, reach, hand) {
+  const nom = (side === 'bh' && NOMB[shot]) ? NOMB[shot] : NOMC[shot] || NOMC.topspin;
+  const sgn = Math.sign(nom[0]) || 1;
+  const hs = hand === 'L' ? -1 : 1; // lat is relative to the player's RIGHT; lefties' dominant side is -lat
+  return { lat: hs * (nom[0] + sgn * 0.55 * reach), fwd: nom[1] + 0.3 * reach, h: nom[2] - (shot === 'smash' || shot === 'serve' ? 0 : 0.25 * reach) };
+}
+
+// character slots
+const chars = [];
+function clearChars() { for (const c of chars) { c.ch.dispose(); scene.remove(c.ch.object3d); } chars.length = 0; }
+function addChar(lookIdx, x, z, hand, view) {
+  const ch = createCharacter(DEFAULT_LOOKS[lookIdx % DEFAULT_LOOKS.length], {});
+  scene.add(ch.object3d);
+  const f = FACES[view] || FACES.back;
+  const ps = { pos: { x, z }, y: 0, hand, zone: 'base', set: 1, stamina: 1, anim: { name: 'ready', face: { x: f[0], z: f[1] } } };
+  chars.push({ ch, ps, x, z, f });
+  return chars[chars.length - 1];
+}
+
+function applyAnim(c, o) {
+  const f = c.f, ps = c.ps;
+  const a = ps.anim;
+  a.name = o.anim; a.face = { x: f[0], z: f[1] };
+  a.shot = ['swing', 'serve'].includes(o.anim) ? o.shot : null;
+  a.side = ['swing'].includes(o.anim) ? o.side : (o.anim === 'serve' ? 'fh' : null);
+  a.phase = o.phase; a.gait = o.gait; a.speed = o.speed; a.emote = o.emote || null;
+  a.reachT = o.reach; a.strideLen = 1.2; a.accel = o.accel || 0;
+  if (o.anim === 'swing' || o.anim === 'serve') {
+    if (o.contact) {
+      const ct = contactFor(o.shot, o.side, o.reach, o.hand);
+      a.contact = ct;
+    } else a.contact = null;
+  } else a.contact = null;
+  ps.hand = o.hand; ps.y = o.y || 0;
+  ps.pos.x = o.px ?? c.x; ps.pos.z = o.pz ?? c.z;
+}
+
+const ctx = { ballPos: { x: 0, y: 1.0, z: 0 }, time: 0 };
+function setBallFor(c, o) {
+  // put the ball at the contact point (world) for head tracking
+  const f = c.f; const rx = -f[1], rz = f[0];
+  const ct = c.ps.anim.contact || { lat: 0, fwd: 7, h: 1.4 };
+  const m = c.ps.hand === 'L' ? -1 : 1; // lat is relative to the player's right
+  return { x: c.ps.pos.x + rx * ct.lat + f[0] * ct.fwd, y: ct.h, z: c.ps.pos.z + rz * ct.lat + f[1] * ct.fwd };
+}
+
+function settle(c, o, frames = 40) {
+  applyAnim(c, o);
+  const b = setBallFor(c, o); ctx.ballPos = b;
+  for (let i = 0; i < frames; i++) { ctx.time += 1 / 60; c.ch.update(c.ps, 1 / 60, ctx); }
+}
+
+function frameCamera(width, cx = 0, cy = 1.0, view = 'back', extraZoom = 1) {
+  const aspect = innerWidth / innerHeight; camera.aspect = aspect;
+  const dist = (width / 2) / (Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * aspect) / extraZoom;
+  const d = Math.max(dist, 2.5);
+  const el = window.__elev ?? (view === 'top' ? 1.0 : 0.16);
+  camera.position.set(cx, cy + Math.sin(el) * d, Math.cos(el) * d);
+  camera.lookAt(cx, cy, 0);
+  camera.updateProjectionMatrix();
+}
+
+function resize() { renderer.setSize(innerWidth, innerHeight, false); }
+addEventListener('resize', resize); resize();
+
+// ---- scenes
+function single() {
+  clearChars();
+  const c = addChar(S.look, 0, 0, S.hand, S.view);
+  c.o = Object.assign({}, S);
+  frameCamera(2.6 / S.zoom, 0, 1.1, 'back');
+  settle(c, S, 60);
+  return c;
+}
+let cur = single();
+
+function sheet(opts) {
+  // opts: { count, mk(i)->overrides, spacing, look, view, hand, base, zoom, rows }
+  clearChars();
+  const n = opts.count, sp = opts.spacing || 1.25;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const o = Object.assign({}, S, opts.base || {}, opts.mk(i));
+    const c = addChar(o.look ?? S.look, (i - (n - 1) / 2) * sp, 0, o.hand, o.view || S.view);
+    c.o = o; out.push(c);
+  }
+  frameCamera((n * sp + 0.6) / (opts.zoom || 1), 0, opts.camY ?? 1.15, 'back');
+  for (const c of out) { ctx.time = 0; settle(c, c.o, opts.frames || 50); }
+  return out;
+}
+
+// run a loop of frames then freeze (locomotion sheets): advance gait with distance
+function locoSheet(opts) {
+  clearChars();
+  const n = opts.count, sp = opts.spacing || 1.3;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const o = Object.assign({}, S, opts.base || {});
+    const c = addChar(o.look ?? S.look, (i - (n - 1) / 2) * sp, 0, o.hand, o.view || S.view);
+    c.o = o; out.push(c);
+  }
+  frameCamera((n * sp + 0.6) / (opts.zoom || 1), 0, opts.camY ?? 1.1, 'back');
+  // each char simulated from the start; capture is taken after all are advanced to their own time
+  const dt = 1 / 60;
+  const speed = opts.speed || 5; // m/s
+  const stride = opts.cycleDist || 2.5;
+  const dirv = opts.dir || [0, -1]; // world direction of travel
+  const tTot = opts.t || 1.0;
+  for (let k = 0; k < out.length; k++) {
+    const c = out[k];
+    const frames = Math.round((opts.t0 + (opts.t1 - opts.t0) * (k / Math.max(1, n - 1))) * 60);
+    let gait = 0, px = c.x, pz = 0;
+    applyAnim(c, c.o);
+    c.ps.anim.name = opts.anim; c.ps.anim.shot = null;
+    ctx.ballPos = { x: 0, y: 1.2, z: -8 };
+    for (let i = 0; i < frames; i++) {
+      px += dirv[0] * speed * dt; pz += dirv[1] * speed * dt;
+      gait = (gait + speed * dt / stride) % 1;
+      c.ps.pos.x = px; c.ps.pos.z = pz; c.ps.anim.gait = gait; c.ps.anim.speed = Math.min(1, speed / 6.5);
+      ctx.time += dt; c.ch.update(c.ps, dt, ctx);
+    }
+    c.offset = [px - c.x, pz];
+  }
+  // re-centre all to the row line for the camera
+  for (const c of out) { c.ch.object3d.position.x -= c.offset[0]; c.ch.object3d.position.z -= c.offset[1]; c.ch.object3d.updateMatrixWorld(true); }
+  return out;
+}
+
+// per-character kinematic simulation sheet: cfgs = [{anim, speed, dir:[x,z], face:[x,z], cyc, t, look, hand, emote, extra}]
+function simSheet(cfgs, opts = {}) {
+  clearChars();
+  const n = cfgs.length, sp = opts.spacing || 1.3, dt = 1 / 60;
+  const out = [];
+  cfgs.forEach((cf, i) => {
+    const c = addChar(cf.look ?? 0, (i - (n - 1) / 2) * sp, 0, cf.hand || 'R', 'back');
+    const face = cf.face || [0, -1]; c.f = face;
+    const ps = c.ps; const a = ps.anim;
+    a.name = cf.anim; a.face = { x: face[0], z: face[1] }; a.emote = cf.emote || null;
+    ps.stamina = cf.stamina ?? 1;
+    let gait = 0, px = c.x, pz = 0;
+    const speed = cf.speed || 0, dir = cf.dir || face, cyc = cf.cyc || 2.5;
+    ctx.ballPos = { x: 0, y: 1.2, z: -8 };
+    const frames = Math.round((cf.t ?? 1.2) * 60);
+    for (let k = 0; k < frames; k++) {
+      const tt = k * dt;
+      let sNow = speed;
+      if (cf.brakeAt != null) { sNow = tt < cf.brakeAt ? speed : Math.max(0, speed - (tt - cf.brakeAt) * (cf.decel || 12)); }
+      px += dir[0] * sNow * dt; pz += dir[1] * sNow * dt; gait = (gait + sNow * dt / cyc) % 1;
+      ps.pos.x = px; ps.pos.z = pz; a.gait = gait; a.speed = Math.min(1, sNow / 6.5); a.strideLen = cyc / 2;
+      a.phase = cf.phase ?? null; a.accel = cf.accel || 0;
+      if (cf.anim === 'brake' || cf.brakeAt != null) a.name = (cf.brakeAt != null && tt >= cf.brakeAt) ? 'brake' : cf.anim;
+      ctx.time += dt; c.ch.update(ps, dt, ctx);
+    }
+    c.off = [px - c.x, pz];
+    out.push(c);
+  });
+  for (const c of out) { c.ch.object3d.position.x -= c.off[0]; c.ch.object3d.position.z -= c.off[1]; c.ch.object3d.updateMatrixWorld(true); }
+  frameCamera((n * sp + 0.6) / (opts.zoom || 1), 0, opts.camY ?? 1.0, 'back');
+  return out;
+}
+
+let last = performance.now();
+function loop(t) {
+  const dt = Math.min(0.05, (t - last) / 1000); last = t;
+  if (S.play && chars.length === 1) {
+    const c = chars[0]; ctx.time += dt;
+    S.phase = (S.phase + dt / 0.9) % 1; S.gait = (S.gait + dt * 1.1) % 1;
+    applyAnim(c, S); c.ps.anim.contact = c.ps.anim.contact; ctx.ballPos = setBallFor(c, S);
+    c.ch.update(c.ps, dt, ctx);
+    const ph = document.getElementById('phase'); if (ph) ph.value = S.phase;
+  }
+  renderer.render(scene, camera);
+  if (!window.__still) requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// ---- UI
+const ui = document.getElementById('ui');
+function opt(name, vals, key) {
+  return `<label>${name} <select data-k="${key}">${vals.map((v) => `<option ${String(S[key]) === String(v) ? 'selected' : ''}>${v}</option>`).join('')}</select></label>`;
+}
+ui.innerHTML = [
+  opt('anim', ['ready', 'split', 'shuffle', 'run', 'backpedal', 'brake', 'swing', 'serve', 'toss', 'celebrate', 'dejected', 'walk'], 'anim'),
+  opt('shot', ['topspin', 'flat', 'slice', 'lob', 'volley', 'smash', 'serve'], 'shot'),
+  opt('side', ['fh', 'bh'], 'side'), opt('hand', ['R', 'L'], 'hand'),
+  opt('view', ['back', 'front', 'side', 'side2', 'three', 'threeb'], 'view'),
+  opt('look', DEFAULT_LOOKS.map((_, i) => i), 'look'),
+  opt('emote', ['', 'happy', 'frustrated', 'focused'], 'emote'),
+  '<label>phase <input id="phase" type="range" min="0" max="1" step="0.01" value="' + S.phase + '" data-k="phase"></label>',
+  '<label>gait <input type="range" min="0" max="1" step="0.01" value="' + S.gait + '" data-k="gait"></label>',
+  '<label>reach <input type="range" min="0" max="1" step="0.01" value="' + S.reach + '" data-k="reach"></label>',
+  '<label>jump y <input type="range" min="0" max="0.6" step="0.01" value="' + S.y + '" data-k="y"></label>',
+  '<label><input type="checkbox" id="play"> play</label> <label><input type="checkbox" id="ct" checked> contact</label>',
+  '<div>keys: H hide UI</div>',
+].join('');
+ui.addEventListener('input', (e) => {
+  const k = e.target.dataset.k; if (!k) return;
+  S[k] = e.target.type === 'range' ? +e.target.value : e.target.value;
+  if (['look', 'hand', 'view'].includes(k)) { if (k === 'look') S.look = +S.look; cur = single(); }
+  if (!S.play) { const c = chars[0]; if (c) settle(c, S, 3); }
+});
+document.getElementById('play').onchange = (e) => { S.play = e.target.checked; };
+document.getElementById('ct').onchange = (e) => { S.contact = e.target.checked; };
+addEventListener('keydown', (e) => { if (e.key === 'h') document.body.classList.toggle('hide'); });
+if (Q.get('hide') === '1') document.body.classList.add('hide');
+if (Q.get('play') === '1') document.getElementById('play').checked = true;
+
+// ---- test API
+const wv = new THREE.Vector3(), wv2 = new THREE.Vector3();
+function contactWorld(c) {
+  const ct = c.ps.anim.contact; if (!ct) return null;
+  const f = c.f; const rx = -f[1], rz = f[0];
+  return wv2.set(c.ps.pos.x + rx * ct.lat + f[0] * ct.fwd, ct.h, c.ps.pos.z + rz * ct.lat + f[1] * ct.fwd);
+}
+window.__dev = {
+  THREE, scene, camera, renderer, chars, S, DEFAULT_LOOKS, getHandWorldPosition, ctx,
+  single, sheet, locoSheet, simSheet, settle, applyAnim, frameCamera, addChar, clearChars,
+  render() { renderer.render(scene, camera); },
+  // distance between racket sweet spot and the planned contact at the contact phase
+  measure(o) {
+    const c = single2(o);
+    const r = [];
+    for (const ph of o.phases || [0.5]) {
+      const oo = Object.assign({}, c.o, { phase: ph });
+      settle(c, oo, 40);
+      getHandWorldPosition(c.ch, 'racket', wv);
+      const cw = contactWorld(c);
+      r.push({ ph, err: cw ? wv.distanceTo(cw) : null, sweet: wv.toArray(), contact: cw && cw.toArray() });
+    }
+    return r;
+  },
+  stats() {
+    const info = renderer.info; return { calls: info.render.calls, tris: info.render.triangles };
+  },
+  still() { window.__still = true; },
+};
+function single2(o) {
+  clearChars();
+  const base = Object.assign({}, S, o);
+  const c = addChar(base.look, 0, 0, base.hand, base.view);
+  c.o = base;
+  frameCamera(2.6, 0, 1.1, 'back');
+  return c;
+}
+window.__ready = true;
+</script>
+</body>
+</html>
