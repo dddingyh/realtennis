@@ -9,10 +9,10 @@ export const AIM_X = 3.45;          // lateral target (m) at |dir| = 1 (sideline
 export const AIM_WIDE = 3.4;        // extra metres of drag at |dir| = 1.7 (T_MISS)
 
 // ---- movement
-export const VMAX = 5.5;            // top running speed (m/s)
-export const ACC = 11.5;              // acceleration (m/s^2)
-export const DEC = 15;              // braking
-export const RUSH_VMAX = 5.9;       // sprint toward the net
+export const VMAX = 5.0;            // top running speed (m/s)
+export const ACC = 10;                // acceleration (m/s^2)
+export const DEC = 13;              // braking
+export const RUSH_VMAX = 5.6;       // sprint toward the net
 export const WALK_SPEED = 3.4;      // between points
 export const HUMAN_REACTION = 0.17; // auto-movement reaction after the opponent's contact (s)
 export const SETUP_TIME = 0.10;     // wanted time standing still before contact
@@ -25,8 +25,8 @@ export const NET_LATERAL = 0.8;     // lateral speed factor at the net (covers l
 // ---- contact geometry
 export const IDEAL_LAT = { fh: 0.85, bh: 0.72 };
 export const IDEAL_FWD = 0.50;
-export const REACH = { fh: 1.50, bh: 1.35 };
-export const LUNGE = 0.45;
+export const REACH = { fh: 1.32, bh: 1.18 };
+export const LUNGE = 0.30;
 export const REACH_Y = 2.35;
 export const SMASH_Y = 3.05;
 
@@ -34,7 +34,7 @@ export const SMASH_Y = 3.05;
 export const TIMING = { prep: 1.25, pointOver: 1.7, changeover: 2.6, matchOver: 4, serveRetry: 0.8 };
 
 // ---- stamina
-export const STAMINA = { drain: 0.09, jog: 0.006, rest: 0.010, between: 0.35 };
+export const STAMINA = { drain: 0.16, jog: 0.006, rest: 0.010, between: 0.35 };
 
 // ---- serve
 export const SERVE = {

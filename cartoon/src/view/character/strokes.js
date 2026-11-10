@@ -10,7 +10,7 @@ export const NF = FN.length;
 export const F = {}; FN.forEach((n, i) => { F[n] = i; });
 
 export const BASE = Float32Array.from(FN.map((n) => ({
-  pYaw: 0, cYaw: 0, lean: 0.18, side: 0, tilt: 0.08, hip: 0.13, sx: 0, sz: 0.02, px: 0, pz: 0, hipX: 0,
+  pYaw: 0, cYaw: 0, lean: 0.13, side: 0, tilt: 0.06, hip: 0.13, sx: 0, sz: 0.02, px: 0, pz: 0, hipX: 0,
   hx: 0.12, hy: 0.98, hz: 0.42, ax: 0, ay: 0.55, az: 0.8, nx: 1, ny: 0, nz: 0,
   lw: 1, lg: 0.25, lx: -0.2, ly: 1.0, lz: 0.3, palm: 0, hYaw: 0, hPitch: 0, track: 1, eD: 0.35, eN: 0.35,
   jmp: 0, heel: 0, eff: 0, lean2: 0, side2: 0,

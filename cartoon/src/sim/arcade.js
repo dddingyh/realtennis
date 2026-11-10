@@ -443,7 +443,7 @@ export class ArcadeSim {
     if (this.phase !== 'rally') return;
     const rl = this.rl;
     const q = this.lastShot && this.lastShot.by === loser ? this.lastShot : null;
-    const forced = q ? (q.pressure < 0.55) : false;
+    const forced = q ? (q.pressure < 0.78) : false;
     this._endPoint(1 - loser, reason, forced ? 'forced' : 'unforced');
   }
 
@@ -612,7 +612,7 @@ export class ArcadeSim {
     const power1 = first ? power : Math.min(power, 0.62);
     const dm = first ? lerp(1.35, 0.55, power) : lerp(1.7, 1.15, power);
     const tz = g.side * (COURT.serviceLineDist - dm);
-    let speed = (first ? lerp(112, 168, power) : lerp(86, 118, power1)) * (0.8 + 0.2 * fT) * stamF / KMH;
+    let speed = (first ? lerp(104, 160, power) : lerp(84, 114, power1)) * (0.8 + 0.2 * fT) * stamF / KMH;
     const top = (first ? 650 : 3000) * Math.PI / 30;
     const q = clamp(fT * stamF, 0, 1);
     const risk = first ? (0.7 + 0.6 * power) : 0.55;
@@ -672,7 +672,7 @@ export class ArcadeSim {
   }
 
   // ------------------------------------------------------------------ intercept planning
-  _vmaxOf(p) { return K.VMAX * (0.84 + 0.16 * p.stamina); }
+  _vmaxOf(p) { return K.VMAX * (0.72 + 0.28 * p.stamina); }
   _moveTime(p, d, tx, tz) {
     const vm = this._vmaxOf(p), a = K.ACC, bdec = K.DEC;
     let t;
@@ -823,7 +823,7 @@ export class ArcadeSim {
     const maxR = K.REACH[plan.side] + K.LUNGE * clamp(spd / 6, 0, 1);
     const reachY = kind === 'smash' ? K.SMASH_Y : K.REACH_Y;
     p.sw.done = false;
-    if (loc.lat > maxR + 0.4 || loc.lat < -0.45 || B.pos.y > reachY + 0.25 || loc.fwd < -1.5 || loc.fwd > 2.4) {
+    if (loc.lat > maxR + 0.12 || loc.lat < -0.45 || B.pos.y > reachY + 0.25 || loc.fwd < -1.5 || loc.fwd > 2.4) {
       p.sw.whiff = true; p.cooldown = 0.35;
       this.emit({ type: 'whiff', by: p.i, reason: 'reach' });
       p.plan = null;

@@ -141,8 +141,9 @@ export class AIBrain {
       } else if (r.chance(S.dtl)) { side = sgn(P.x); mag = r.range(0.7, 0.95) * corner; }          // down the line
       else { side = -sgn(P.x) || 1; mag = r.range(0.7, 1.0) * corner; }                          // cross-court
       aimX = side * mag;
-      power = S.pow + 0.12 * (L - 0.5) + r.range(-0.08, 0.1);
+      power = S.pow + 0.3 * (L - 0.5) + r.range(-0.08, 0.1);
       if (stretched && pressure < 0.42) power += 0.16;
+      power += clamp((sim.rl.shots - 6) * 0.035, 0, 0.3);          // impatience: long rallies get hit harder
       power = clamp(power, 0.2, 1);
       const u = r.next();
       if (u < S.slice) { shot = 'slice'; power = clamp(power - 0.08, 0.2, 1); }
@@ -155,7 +156,7 @@ export class AIBrain {
     else if (p.wantNet && pressure > 0.8 && Math.abs(P.z) > 8) sim.setNet(this.i, false);
     const sig = this.sigmaT * (1 + 1.1 * pressure) * (1 + clamp((pl.inSpeed - 25) / 45, 0, 0.4));
     // do not aim so close to the edge of the timing window that ordinary timing error drags the ball wide
-    const dirCap = clamp((K.T_FULL - 1.3 * sig) / K.T_FULL, 0.2, 1);
+    const dirCap = clamp((K.T_FULL - 0.8 * sig) / K.T_FULL, 0.3, 1);
     aimX = clamp(aimX, -K.AIM_X * dirCap, K.AIM_X * dirCap);
     const offset = sim.timingForAim(this.i, aimX) / 1000 + r.gauss(0, sig);
     return { shot, power, offset, aimX };

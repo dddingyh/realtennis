@@ -164,11 +164,11 @@ class Merge {
 }
 
 // primitive prototypes (shared, cloned+transformed per use)
-const SPH_LO = new THREE.SphereGeometry(1, 12, 8);
-const SPH_MD = new THREE.SphereGeometry(1, 16, 10);
-const SPH_HI = new THREE.SphereGeometry(1, 24, 16);
-const cyl = (rt, rb, h, seg = 10) => new THREE.CylinderGeometry(rt, rb, h, seg, 1, false);
-const cap = (r, len, seg = 8) => new THREE.CapsuleGeometry(r, len, 3, seg);
+const SPH_LO = new THREE.SphereGeometry(1, 8, 6);
+const SPH_MD = new THREE.SphereGeometry(1, 12, 8);
+const SPH_HI = new THREE.SphereGeometry(1, 20, 12);
+const cyl = (rt, rb, h, seg = 8) => new THREE.CylinderGeometry(rt, rb, h, seg, 1, false);
+const cap = (r, len, seg = 8) => new THREE.CapsuleGeometry(r, len, 2, Math.min(seg, 7));
 
 export const BUILDS = {
   slim: { w: 0.93, leg: 0.94, arm: 0.92 },
@@ -194,7 +194,7 @@ export function buildBodyGeometry(look) {
   if (skirt) {
     const pts = [];
     for (let i = 5; i >= 0; i--) { const t = i / 5; pts.push(new THREE.Vector2(0.15 * b.w + t * 0.12, 0.05 - t * 0.2)); }
-    part('pelvis', new THREE.LatheGeometry(pts, 16), xf(0, 0, 0, 1, 1, 0.85), SLOT.shorts);
+    part('pelvis', new THREE.LatheGeometry(pts, 12), xf(0, 0, 0, 1, 1, 0.85), SLOT.shorts);
     part('pelvis', new THREE.TorusGeometry(0.27, 0.012, 5, 16), xf(0, -0.15, 0, 1, 1, 0.85, Math.PI / 2, 0, 0), SLOT.accent);
   }
   // torso
@@ -240,7 +240,7 @@ export function buildBodyGeometry(look) {
 }
 
 function hairCap(part, slot, thetaLen, tilt, k = 1) {
-  const g = new THREE.SphereGeometry(1, 20, 12, 0, Math.PI * 2, 0, thetaLen);
+  const g = new THREE.SphereGeometry(1, 14, 8, 0, Math.PI * 2, 0, thetaLen);
   part('head', g, xf(0, 0.16, -0.004, 0.168 * k, 0.18 * k, 0.172 * k, tilt, 0, 0), slot);
 }
 
@@ -362,7 +362,7 @@ export function getRacketGeometry() {
   const pts = [];
   for (let i = 0; i < 28; i++) { const t = (i / 28) * Math.PI * 2; pts.push(new THREE.Vector3(Math.sin(t) * a, cy + Math.cos(t) * b, 0)); }
   const curve = new THREE.CatmullRomCurve3(pts, true);
-  M.add(new THREE.TubeGeometry(curve, 40, 0.0135, 6, true), new THREE.Matrix4(), SLOT.accent, -1);
+  M.add(new THREE.TubeGeometry(curve, 28, 0.0135, 5, true), new THREE.Matrix4(), SLOT.accent, -1);
   const geo = M.build();
   // strings
   const sc = document.createElement('canvas'); sc.width = sc.height = 64;

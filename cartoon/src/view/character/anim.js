@@ -257,11 +257,11 @@ export class Animator {
         break;
       }
       case 'brake': {
-        this.setSpots(0.40, -0.14, 0.4, -0.30, 0.30, -0.25);
-        P[F.hip] = 0.26; P[F.lean] = clamp(-0.05 + this.vbz * 0.02, -0.15, 0.2); P[F.tilt] = 0.05;
+        this.setSpots(0.30, -0.08, 0.3, -0.26, 0.20, -0.2);
+        P[F.hip] = 0.2; P[F.lean] = clamp(-0.05 + this.vbz * 0.02, -0.15, 0.2); P[F.tilt] = 0.05;
         P[F.hx] = 0.46; P[F.hy] = 1.02; P[F.hz] = 0.25; P[F.lw] = 0; P[F.lx] = -0.52; P[F.ly] = 1.1; P[F.lz] = 0.15; P[F.eD] = 0.8; P[F.eN] = 0.8;
         P[F.side] = clamp(this.vbx * 0.05, -0.25, 0.25); P[F.sx] = clamp(this.vbx * 0.03, -0.12, 0.12); P[F.sz] = clamp(this.vbz * 0.02, -0.1, 0.1);
-        this.thr = 0.12;
+        this.thr = 0.28;
         break;
       }
       case 'run': case 'walk': case 'shuffle': case 'backpedal': this.evalLoco(P, name, s, accel); break;
@@ -401,7 +401,7 @@ export class Animator {
           const e = su * su * (3 - 2 * su);
           ft.x = lerp(ft.sx, tx, e); ft.z = lerp(ft.sz, tz, e);
           ft.yaw = ft.syaw + wrap(tyaw - ft.syaw) * e;
-          const H = name === 'run' ? 0.05 + 0.14 * s : name === 'walk' ? 0.06 : name === 'shuffle' ? 0.05 : 0.07;
+          const H = name === 'run' ? 0.08 + 0.2 * s : name === 'walk' ? 0.06 : name === 'shuffle' ? 0.05 : 0.07;
           ft.y = H * Math.sin(Math.PI * su);
           ft.pitch = lerp(0.55, -0.3, su) * (name === 'run' ? 1 : 0.5);
         } else {
@@ -617,7 +617,7 @@ export class Animator {
         yawT = wrap(yw - (P[F.pYaw] + P[F.cYaw]));
         pitchT = Math.atan2(-(bpos.y - hy), dh);
         wt = P[F.track] * (1 - sstep(1.9, 2.6, Math.abs(yawT)));
-        yawT = clamp(yawT, -1.15, 1.15); pitchT = clamp(pitchT, -0.75, 0.55);
+        yawT = clamp(yawT, -1.15, 1.15); pitchT = clamp(pitchT, -0.7, 0.3) * 0.8;
         this.hasBall = true;
       }
     }
