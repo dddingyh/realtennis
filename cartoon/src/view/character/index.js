@@ -4,25 +4,24 @@
 //   DEFAULT_LOOKS                 -> 8 original designs
 //   getHandWorldPosition(character, 'toss'|'racket'|'sweet'|'grip'|'tip', targetVec3) -> targetVec3
 import * as THREE from 'three';
-import { BONES, BI, DIM, makePalette, fillPalette, makeToon, outlineMaterial, getBodyGeometry, getRacketGeometry, Face, faceGeometry } from './build.js';
+import { BONES, BI, DIM, makePalette, fillPalette, makeToon, makeOutlineMaterial, getBodyGeometry, getRacketGeometry, Face, faceGeometry } from './build.js';
 import { Animator, GRIP_Q } from './anim.js';
 
 export const DEFAULT_LOOKS = [
-  { id: 'ember', name: '炽焰', skin: '#f1c19a', hair: '#6a3f22', shirt: '#e8473b', shorts: '#2b3252', shoes: '#fafafa', accent: '#ffd23f', hairStyle: 'short', build: 'athletic', headwear: 'headband' },
+  { id: 'ember', name: '炽焰', skin: '#f1c19a', hair: '#6a3f22', shirt: '#e8473b', shorts: '#334079', shoes: '#fafafa', accent: '#ffd23f', hairStyle: 'short', build: 'athletic', headwear: 'headband', block: true },
   { id: 'mint', name: '薄荷', skin: '#e6b08a', hair: '#3a4062', shirt: '#2fb8a4', shorts: '#f4f1e8', shoes: '#2b6f9e', accent: '#ff7f6b', hairStyle: 'ponytail', build: 'slim', skirt: true, headwear: 'visor' },
-  { id: 'bolt', name: '闪电', skin: '#8d5a3c', hair: '#3b3430', shirt: '#ffd23f', shorts: '#262b45', shoes: '#ef4e4e', accent: '#262b45', hairStyle: 'curly', build: 'sturdy', sleeveless: true },
+  { id: 'bolt', name: '闪电', skin: '#cc9060', hair: '#4a403a', shirt: '#ffd23f', shorts: '#3a4380', shoes: '#ef4e4e', accent: '#262b45', hairStyle: 'curly', build: 'sturdy', sleeveless: true },
   { id: 'frost', name: '霜刃', skin: '#f6d6bd', hair: '#bfe3ff', shirt: '#4a6cf0', shorts: '#e9eefc', shoes: '#ffffff', accent: '#6fe0ff', hairStyle: 'spiky', build: 'slim' },
-  { id: 'grove', name: '青松', skin: '#d6a07a', hair: '#5a4630', shirt: '#3e9b4f', shorts: '#fff1cf', shoes: '#8b5a2b', accent: '#f0c24b', hairStyle: 'buzz', build: 'sturdy', headwear: 'cap' },
-  { id: 'plum', name: '紫霞', skin: '#c88f68', hair: '#7a35a0', shirt: '#8a4fd6', shorts: '#2b2140', shoes: '#f6e7ff', accent: '#ff8fd0', hairStyle: 'bun', build: 'athletic', skirt: true, headwear: 'headband' },
+  { id: 'grove', name: '青松', skin: '#e0ac84', hair: '#5a4630', shirt: '#3e9b4f', shorts: '#fff1cf', shoes: '#8b5a2b', accent: '#f0c24b', hairStyle: 'buzz', build: 'sturdy', headwear: 'cap' },
+  { id: 'plum', name: '紫霞', skin: '#dca67c', hair: '#7a35a0', shirt: '#8a4fd6', shorts: '#4a3a78', shoes: '#f6e7ff', accent: '#ff8fd0', hairStyle: 'bun', build: 'athletic', skirt: true, headwear: 'headband' },
   { id: 'sunny', name: '朝阳', skin: '#f0b98d', hair: '#e0a030', shirt: '#ff8f2e', shorts: '#ffffff', shoes: '#2d3350', accent: '#2d3350', hairStyle: 'bob', build: 'athletic', skirt: true },
-  { id: 'night', name: '夜行', skin: '#7a4d34', hair: '#2a2a3e', shirt: '#2c2f3f', shorts: '#1d1f2b', shoes: '#ffd23f', accent: '#ff4f7a', hairStyle: 'mohawk', build: 'athletic', headwear: 'bandana', sleeveless: true },
+  { id: 'night', name: '夜行', skin: '#c28a5c', hair: '#3c3c58', shirt: '#454a78', shorts: '#3b3f63', shoes: '#ffd23f', accent: '#ff4f7a', hairStyle: 'mohawk', build: 'athletic', headwear: 'bandana', sleeveless: true },
 ];
 
 function fullLook(look) {
   const d = DEFAULT_LOOKS[0];
-  const l = Object.assign({}, d, look || {});
-  if (look && look.hairStyle == null) l.hairStyle = d.hairStyle;
-  return l;
+  const base = { skin: d.skin, hair: d.hair, shirt: d.shirt, shorts: d.shorts, shoes: d.shoes, accent: d.accent, hairStyle: 'short', build: 'athletic', headwear: 'none', skirt: false, sleeveless: false, block: false };
+  return Object.assign(base, look || {});
 }
 
 export function createCharacter(look, opts = {}) {
@@ -40,7 +39,7 @@ export function createCharacter(look, opts = {}) {
   const palette = makePalette();
   fillPalette(palette, L);
   const toon = makeToon(palette);
-  const outMat = outlineMaterial();
+  const outMat = makeOutlineMaterial(palette);
 
   const geo = getBodyGeometry(L);
   const body = new THREE.SkinnedMesh(geo, toon);
@@ -82,7 +81,8 @@ export function createCharacter(look, opts = {}) {
       object3d.position.set(an.px, 0, an.pz);
       object3d.rotation.y = an.yaw;
       const sq = an.squash;
-      rig.scale.set(an.m * (1 - sq * 0.5), 1 + sq, 1 - sq * 0.5);
+      const sq2 = sq + an.sqPose;
+      rig.scale.set(an.m * (1 - sq2 * 0.5), 1 + sq2, 1 - sq2 * 0.5);
       const f = an.face;
       face.draw(f.blink, f.mouth, f.brow, f.gx, f.gy);
       object3d.updateMatrixWorld(true);
@@ -97,7 +97,7 @@ export function createCharacter(look, opts = {}) {
       }
     },
     dispose() {
-      palette.dispose(); toon.dispose(); face.dispose();
+      palette.dispose(); toon.dispose(); outMat.dispose(); face.dispose();
       object3d.removeFromParent();
     },
     // debugging / integration access

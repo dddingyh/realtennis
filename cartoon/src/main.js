@@ -111,7 +111,7 @@ async function startMatch(settings) {
     if (mods.RemoteAdapter && host) { try { remote = new mods.RemoteAdapter(sim, humanIdx, host, { timingOffsetMs: settings.offset }); } catch (e) { console.warn('RemoteAdapter failed', e); } }
   }
   hud.showKeyHelp(settings.control === 'keyboard');
-  setTimeout(() => hud.showKeyHelp(false), 14000);
+  clearTimeout(startMatch.kt); startMatch.kt = setTimeout(() => hud.showKeyHelp(false), 12000);
   lastPaused = false; endTimer = 0; lastServeKmh = 0; slow.t = 0;
   dom.menu.classList.add('hidden'); dom.end.classList.add('hidden'); dom.pause.classList.add('hidden'); dom.hud.classList.remove('hidden');
   mode = 'playing';
@@ -176,7 +176,7 @@ function dispatch(events, state) {
         break;
       }
       case 'point': {
-        lastPointWinner = e.winner; sfx.applause(e.winner === humanIdx ? 1 : 0.65);
+        lastPointWinner = e.winner; hud.showKeyHelp(false); sfx.applause(e.winner === humanIdx ? 1 : 0.65);
         if (e.shots >= 9) sfx.applause(0.8);
         refreshBoards();
         break;
@@ -287,6 +287,7 @@ async function init() {
   $('#pMenu').onclick = toMenu;
   const unlock = () => sfx.unlock();
   window.addEventListener('pointerdown', unlock, { passive: true }); window.addEventListener('keydown', unlock);
+  window.addEventListener('keydown', (e) => { if (mode === 'playing' && !e.repeat && /^(Space|Key[JKLIWP]|Arrow|Shift)/.test(e.code)) hud.showKeyHelp(false); });
   document.addEventListener('visibilitychange', () => { if (document.hidden && mode === 'playing' && sim && !sim.paused) setPaused(true); });
   window.addEventListener('keydown', (e) => { if (e.code === 'F3') { perfOn = !perfOn; dom.perf.classList.toggle('hidden', !perfOn); } });
   document.addEventListener('contextmenu', (e) => { if (mode === 'playing') e.preventDefault(); });

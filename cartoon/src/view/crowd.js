@@ -3,7 +3,9 @@ import * as THREE from 'three';
 import { STANDS, inRoofShade } from './stands.js';
 import { mulberry32, GeoBuilder } from './gfx.js';
 
-const SHIRTS = ['#e84a4a', '#f2c230', '#3fa0e0', '#47b86a', '#f08a3a', '#9b6ad8', '#f5f5f0', '#f5f5f0', '#2d3a63', '#e86aa8', '#43c0b8', '#8a8f9a', '#c0392b', '#ffffff', '#1f8a70', '#ffd9a0'];
+const NEUTRALS = ['#f4f2ec', '#ffffff', '#e9e4d8', '#d8cdb6', '#c9c9cc', '#9aa0aa', '#2b3552', '#1f2a48', '#3b4a6b', '#6f7686', '#efe7d4', '#14182a'];
+const PASTELS = ['#cfe0f2', '#f2d6d6', '#d6ecd9', '#f0e6c8', '#d9d2ee', '#bcd6e8', '#f3dccb'];
+const ACCENTS = ['#e84a4a', '#f2c230', '#2f6db4', '#2fa36b', '#f08a3a', '#e86aa8'];
 const SKINS = ['#f6d3b8', '#efc4a0', '#e8b88f', '#d9a074', '#c68d5e', '#a8693f', '#8c5a36', '#5a3a22'];
 const HAIRS = ['#1b1410', '#2b1c12', '#3b2616', '#6b4423', '#a67c3d', '#d6b25e', '#b8b8b8', '#7a3b1e'];
 
@@ -32,7 +34,7 @@ const VERT = /* glsl */`
 attribute float aPart;
 attribute vec3 iPos; attribute float iRot; attribute vec4 iRand; attribute vec3 iShirt; attribute vec3 iSkin; attribute vec3 iHair; attribute float iShade;
 uniform float uTime, uOvation, uClap, uWave, uWaveOn; uniform vec3 uSun;
-varying vec3 vP; varying float vPart; varying vec3 vShirt; varying vec3 vSkin; varying vec3 vHair; varying float vL; varying float vShade; varying float vJ;
+varying vec3 vP; varying float vPart; varying vec3 vShirt; varying vec3 vSkin; varying vec3 vHair; varying float vL; varying float vShade; varying float vJ; varying float vDist;
 void main(){
   vec3 p = position; vP = position; vPart = aPart;
   float side = p.x < 0.0 ? -1.0 : 1.0;
@@ -63,10 +65,11 @@ void main(){
   vec3 n = vec3(cy * normal.x + sy * normal.z, normal.y, -sy * normal.x + cy * normal.z);
   vL = dot(n, uSun) * 0.5 + 0.5;
   vShirt = iShirt; vSkin = iSkin; vHair = iHair; vShade = iShade; vJ = iRand.w;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(w, 1.0);
+  vec4 mv = modelViewMatrix * vec4(w, 1.0); vDist = -mv.z;
+  gl_Position = projectionMatrix * mv;
 }`;
 const FRAG = /* glsl */`
-varying vec3 vP; varying float vPart; varying vec3 vShirt; varying vec3 vSkin; varying vec3 vHair; varying float vL; varying float vShade; varying float vJ;
+varying vec3 vP; varying float vPart; varying vec3 vShirt; varying vec3 vSkin; varying vec3 vHair; varying float vL; varying float vShade; varying float vJ; varying float vDist;
 void main(){
   vec3 c;
   if (vPart < 0.5) c = vP.y < 0.3 ? vec3(0.07, 0.10, 0.2) * (0.6 + vJ * 0.9) : vShirt;
@@ -74,7 +77,9 @@ void main(){
   else c = vP.y < 0.4 ? vSkin : vShirt;
   float l = floor(vL * 3.0 + 0.5) / 3.0;
   float lit = mix(0.62, 1.0, l) * mix(0.78, 1.0, vShade);
-  gl_FragColor = vec4(c * lit, 1.0);
+  vec3 oc = c * lit; float fa = smoothstep(30.0, 80.0, vDist);
+  oc = mix(oc, oc * vec3(0.6, 0.68, 0.9), fa);
+  gl_FragColor = vec4(oc, 1.0);
   #include <colorspace_fragment>
 }`;
 
@@ -94,7 +99,7 @@ export class Crowd {
     const rnd = mulberry32(2024);
     const { BX, BZ, treads, seatFrac } = STANDS;
     const sh = new THREE.Color(), sk = new THREE.Color(), hr = new THREE.Color();
-    const shirts = SHIRTS.map((c) => new THREE.Color(c));
+    const pick = () => { const r = rnd(); const l = r < 0.15 ? ACCENTS : r < 0.45 ? PASTELS : NEUTRALS; return l[(rnd() * l.length) | 0]; };
     // groups by (tier, side)
     const groups = {};
     const push = (key, rec) => (groups[key] = groups[key] || []).push(rec);
@@ -102,10 +107,10 @@ export class Crowd {
       if (!t.seat) continue;
       const oc = t.o0 + (t.o1 - t.o0) * seatFrac;
       const hxo = BX + oc, hzo = BZ + oc;
-      const empty = t.tier === 0 ? 0.07 : 0.14 + t.row * 0.01;
+      const empty = t.tier === 0 ? 0.11 : 0.18 + t.row * 0.01;
       const step = 0.56;
-      const place = (side, x, z, par) => {
-        if (rnd() < empty) return;
+      const place = (side, x, z, par, idx) => {
+        if (rnd() < empty || idx % 21 < 2) return;
         const tx = 0, tz = THREE.MathUtils.clamp(z * 0.35, -6, 6);
         const rot = Math.atan2(tx - x, tz - z) + (rnd() - 0.5) * 0.25;
         const shade = inRoofShade(x, t.y + 0.7, z, sun.x, sun.y, sun.z) ? 0 : 1;
@@ -113,10 +118,10 @@ export class Crowd {
       };
       // +x / -x sides include the corner blocks, +z / -z sides span |x| <= hxo - depth
       const nZ = Math.floor((2 * (BZ + t.o1)) / step);
-      for (const sx of [1, -1]) for (let i = 0; i < nZ; i++) { const z = -(BZ + t.o1) + (i + 0.5) * step; place(sx > 0 ? 'px' : 'nx', sx * hxo, z, (z + BZ + t.o1) / (2 * (BZ + t.o1))); }
+      for (const sx of [1, -1]) for (let i = 0; i < nZ; i++) { const z = -(BZ + t.o1) + (i + 0.5) * step; place(sx > 0 ? 'px' : 'nx', sx * hxo, z, (z + BZ + t.o1) / (2 * (BZ + t.o1)), i); }
       const inner = BX + t.o0;
       const nX = Math.floor((2 * inner) / step);
-      for (const sz of [1, -1]) for (let i = 0; i < nX; i++) { const x = -inner + (i + 0.5) * step; place(sz > 0 ? 'pz' : 'nz', x, sz * hzo, (x + inner) / (2 * inner)); }
+      for (const sz of [1, -1]) for (let i = 0; i < nX; i++) { const x = -inner + (i + 0.5) * step; place(sz > 0 ? 'pz' : 'nz', x, sz * hzo, (x + inner) / (2 * inner), i); }
     }
     for (const key of Object.keys(groups)) {
       const arr = groups[key]; const n = arr.length;
@@ -125,8 +130,8 @@ export class Crowd {
       arr.forEach((a, i) => {
         iPos.set([a.x, a.y, a.z], i * 3); iRot[i] = a.rot;
         iRand.set([rnd(), rnd(), a.par, rnd()], i * 4);
-        sh.copy(shirts[(rnd() * shirts.length) | 0]); if (theme && rnd() < 0.12) sh.set(theme.accent);
-        sh.offsetHSL(0, 0, (rnd() - 0.5) * 0.08);
+        sh.set(pick()); if (theme && rnd() < 0.05) sh.set(theme.accent);
+        sh.offsetHSL(0, 0, (rnd() - 0.5) * 0.06);
         iShirt.set([sh.r, sh.g, sh.b], i * 3);
         sk.set(SKINS[(rnd() * rnd() * SKINS.length * 1.1) | 0] || SKINS[3]); iSkin.set([sk.r, sk.g, sk.b], i * 3);
         hr.set(HAIRS[(rnd() * HAIRS.length) | 0]); iHair.set([hr.r, hr.g, hr.b], i * 3);

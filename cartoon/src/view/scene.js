@@ -28,15 +28,15 @@ export class Stage {
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
     const sc = sun.shadow.camera; sc.left = -27; sc.right = 27; sc.top = 27; sc.bottom = -27; sc.near = 15; sc.far = 190;
-    sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.035; sun.shadow.radius = 3.2; sun.shadow.blurSamples = 12;
+    sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.035; sun.shadow.radius = 4.5; sun.shadow.blurSamples = 16; sun.shadow.intensity = 0.5;
     this.scene.add(sun, sun.target);
 
     this.ball = new BallView(); this.scene.add(this.ball.group);
     this.fx = new Particles(); this.scene.add(this.fx.points);
     this.venue = null; this.chars = [null, null]; this.charGroup = new THREE.Group(); this.scene.add(this.charGroup);
     // player contact shadows
-    const blobTex = canvasTex(64, 64, (g) => { const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, 'rgba(10,15,30,0.55)'); gr.addColorStop(0.7, 'rgba(10,15,30,0.25)'); gr.addColorStop(1, 'rgba(10,15,30,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64); }, { aniso: false });
-    this.blobs = [0, 1].map(() => { const m = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 1.3).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: blobTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 })); m.position.y = 0.014; m.renderOrder = 2; this.scene.add(m); return m; });
+    const blobTex = canvasTex(64, 64, (g) => { const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, 'rgba(10,15,30,0.36)'); gr.addColorStop(0.7, 'rgba(10,15,30,0.16)'); gr.addColorStop(1, 'rgba(10,15,30,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64); }, { aniso: false });
+    this.blobs = [0, 1].map(() => { const m = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 1.1).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: blobTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 })); m.position.y = 0.014; m.renderOrder = 2; this.scene.add(m); return m; });
     this.surface = null;
     this.size = { w: 1, h: 1 };
     this.humanIdx = 0;

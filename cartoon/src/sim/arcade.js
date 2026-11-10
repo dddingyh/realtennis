@@ -123,7 +123,7 @@ export class ArcadeSim {
     const plan = p.plan;
     const side = plan ? plan.side : 'fh';
     const s = (side === 'fh' ? 1 : -1) * p.handX;
-    return clamp(aimX * s / K.AIM_X, -1, 1) * K.T_FULL * 1000;
+    return K.xToAim(clamp(aimX, -K.AIM_X, K.AIM_X)) * s * K.T_FULL * 1000;
   }
   /** Serve: timing offset (ms from the apex) for a target x in the receiving box. */
   serveTimingForAim(i, x) {
@@ -746,7 +746,7 @@ export class ArcadeSim {
     const evalCand = (c) => {
       const P = { x: c.s.x, y: c.s.y, z: c.s.z };
       let best = null;
-      const sides = c.kind === 'smash' ? ['fh'] : ['fh', 'bh'];
+      const sides = c.kind === 'smash' ? ['fh'] : (old && old.kind !== 'smash' ? [old.side] : ['fh', 'bh']);
       for (const side of sides) {
         const stand = this._standFor(p, side, P, c.kind);
         const dx = stand.x - p.pos.x, dz = stand.z - p.pos.z, d = Math.hypot(dx, dz);
@@ -831,13 +831,14 @@ export class ArcadeSim {
     }
     const t = sw.t;
     const at = Math.abs(t);
+    const uW = clamp((at - K.T_FULL) / (K.T_MISS - K.T_FULL), 0, 1);
     const win = sw.win;
     const label = at <= win.T_PERFECT ? 'perfect' : at > K.T_FULL ? 'wide' : t < 0 ? 'early' : 'late';
     const rd = Math.hypot(snap.pos.x - plan.standTrue.x, snap.pos.z - plan.standTrue.z);
     const reachT = clamp((loc.lat - 1.0) / Math.max(0.1, maxR - 1.0), 0, 1);
     const vf = (snap.vel.z * -p.facing);
     const back = vf < -1.5 ? clamp((-vf - 1.5) / 3, 0, 1) * 0.18 : 0;
-    const setv = clamp(1 - 0.38 * clamp(spd / 6, 0, 1) - 0.28 * clamp(rd / 1.6, 0, 1) - 0.34 * reachT - back, 0, 1);
+    const setv = clamp(1 - 0.5 * clamp(spd / (K.VMAX * 0.9), 0, 1) - 0.35 * clamp(rd / 1.1, 0, 1) - 0.5 * reachT - back, 0, 1);
     const vIn = Math.hypot(B.vel.x, B.vel.y, B.vel.z);
     const fPace = clamp(1 - 0.014 * Math.max(0, vIn - 22), 0.55, 1);
     const y = B.pos.y;
@@ -849,14 +850,14 @@ export class ArcadeSim {
     let fT;
     if (at <= win.T_PERFECT) fT = 1;
     else if (at <= K.T_FULL) fT = lerp(1, 0.88, (at - win.T_PERFECT) / (K.T_FULL - win.T_PERFECT));
-    else fT = 0.62 - 0.22 * clamp((at - K.T_FULL) / (K.T_MISS - K.T_FULL), 0, 1);
-    let q = clamp((0.32 + 0.68 * setv) * fPace * fH * fS * fT, 0, 1);
+    else fT = 0.88 - 0.4 * clamp((at - K.T_FULL) / (K.T_MISS - K.T_FULL), 0, 1);
+    let q = clamp((0.1 + 0.9 * setv) * fPace * fH * fS * fT, 0, 1);
     const mishit = label === 'wide' ? 'wide' : (reachT > 0.8 ? 'stretch' : null);
     // ---- target
     const dirT = clamp(t / K.T_FULL, -1.7, 1.7);
     const sgnS = (plan.side === 'fh' ? 1 : -1) * p.handX;
     const aim = dirT * sgnS;
-    let tx = Math.abs(aim) <= 1 ? aim * K.AIM_X : sgn(aim) * (K.AIM_X + (Math.abs(aim) - 1) * K.AIM_WIDE / 0.7);
+    let tx = K.aimToX(aim);
     const power = sw.power;
     const opp = 1 - p.i;
     const fOpp = -p.facing;                                   // sign of the opponent's half (z)
@@ -886,17 +887,17 @@ export class ArcadeSim {
       }
       let speed = params.speed * (0.8 + 0.2 * q);
       if (!isDrop) speed += (kind === 'volley' ? 0.26 : 0.1) * Math.max(0, vIn - 12);
-      if (label === 'wide') speed *= 0.85;
+      if (label === 'wide') speed *= 1 - 0.2 * uW;
       speed = Math.max(speed, 8);
       sol = solveLaunch({ pos: B.pos, target: { x: tx, z: tz }, speed, top, surface: this.surface, clear: params.clear });
     }
     // ---- scatter
-    const edge = clamp(1 - Math.min(COURT.singlesHalfWidth - Math.abs(tx), isDrop ? 3 : Math.abs(tz) > 0 ? HALF - Math.abs(tz) : 3) / 1.6, 0, 1);
+    const edge = clamp(1 - Math.min(COURT.singlesHalfWidth - Math.abs(tx), isDrop ? 3 : Math.abs(tz) > 0 ? HALF - Math.abs(tz) : 3) / 2.2, 0, 1);
     const pw = 0.72 + 0.56 * power;
     const kScale = kind === 'smash' ? 1.15 : kind === 'volley' ? 0.9 : kind === 'lob' ? 0.9 : 1;
-    const sd = (0.16 + 1.9 * Math.pow(1 - q, 1.3)) * pw * (1 + 0.45 * edge) * kScale + (label === 'wide' ? 0.5 : 0);
-    const sl = (0.14 + 1.5 * Math.pow(1 - q, 1.3)) * pw * (1 + 0.3 * edge) * kScale + (label === 'wide' ? 0.4 : 0);
-    const sCl = (0.06 + 0.6 * Math.pow(1 - q, 1.2)) * pw * kScale + (label === 'wide' ? 0.15 : 0);
+    const sd = (0.16 + 1.9 * Math.pow(1 - q, 1.3)) * pw * (1 + 0.45 * edge) * kScale + (label === 'wide' ? 0.9 * uW : 0);
+    const sl = (0.2 + 2.2 * Math.pow(1 - q, 1.3)) * pw * (1 + 1.5 * edge) * kScale + (label === 'wide' ? 0.7 * uW : 0);
+    const sCl = (0.06 + 0.6 * Math.pow(1 - q, 1.2)) * pw * kScale + (label === 'wide' ? 0.2 * uW : 0);
     const sc = scatterLaunch(sol, sd, sl, this.rng, sCl);
     // ---- apply to the ball
     const b = this.b;

@@ -121,7 +121,7 @@ export class AIBrain {
       if (oppNet) { shot = 'lob'; power = 0.42; aimX = -sgn(oppX) * 1.5; }
       else { shot = r.chance(0.45) ? 'slice' : 'topspin'; power = 0.36; aimX = -sgn(P.x) * r.range(0.8, 1.8); }
     } else if (oppNet) {
-      const lob = r.chance(S.lobNet * (0.7 + 0.6 * L)) && Math.abs(opp.pos.z) < 5;
+      const lob = r.chance(0.3 + S.lobNet * 1.4) && Math.abs(opp.pos.z) < 5.5;
       if (lob) { shot = 'lob'; power = r.range(0.35, 0.65); aimX = (Math.abs(oppX) > 0.8 ? -sgn(oppX) : sgn(r.next() - 0.5)) * 1.8; }
       else { shot = r.chance(0.5) ? 'flat' : 'topspin'; power = clamp(0.62 + 0.12 * L + r.range(-0.05, 0.05), 0, 1); aimX = open(r.range(0.8, 1)); }
     } else if (shortBall && pressure < 0.5 && r.chance(S.attack)) {
@@ -156,8 +156,8 @@ export class AIBrain {
     else if (p.wantNet && pressure > 0.8 && Math.abs(P.z) > 8) sim.setNet(this.i, false);
     const sig = this.sigmaT * (1 + 1.1 * pressure) * (1 + clamp((pl.inSpeed - 25) / 45, 0, 0.4));
     // do not aim so close to the edge of the timing window that ordinary timing error drags the ball wide
-    const dirCap = clamp((K.T_FULL - 0.8 * sig) / K.T_FULL, 0.3, 1);
-    aimX = clamp(aimX, -K.AIM_X * dirCap, K.AIM_X * dirCap);
+    const dirCap = clamp((K.T_FULL - 1.6 * sig) / K.T_FULL, 0.3, 1);
+    aimX = clamp(aimX, -K.aimToX(dirCap), K.aimToX(dirCap));
     const offset = sim.timingForAim(this.i, aimX) / 1000 + r.gauss(0, sig);
     return { shot, power, offset, aimX };
   }
@@ -165,8 +165,8 @@ export class AIBrain {
 
 /** Level -> behaviour mapping (calibrated by tests/arcade_compete.mjs). */
 export const AI_TUNE = {
-  sigmaMin: 0.012, sigmaRange: 0.095, sigmaExp: 1.35,
-  tacticLo: 0.35, tacticHi: 0.97,
+  sigmaMin: 0.012, sigmaRange: 0.075, sigmaExp: 1.2,
+  tacticLo: 0.55, tacticHi: 0.97,
   aimLo: 0.70, aimHi: 0.97,
-  reactLo: 0.30, reactHi: 0.12,
+  reactLo: 0.24, reactHi: 0.12,
 };

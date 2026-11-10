@@ -40,7 +40,7 @@ a { color: inherit; }
 #stance .zone { display: flex; align-items: center; gap: 8px; font-size: 20px; }
 #stance .zone.z-net { color: #c2410c; } #stance .zone.z-toNet, #stance .zone.z-toBase { color: #6b7280; }
 #stance .keys { font-size: 12px; color: var(--ink2); margin-top: 2px; }
-#hintText { position: absolute; left: 50%; top: 74px; transform: translateX(-50%); padding: 6px 18px; border-radius: 999px; background: rgba(23,34,77,.86); color: #fff; font-size: 18px; font-weight: 900; opacity: 0; transition: opacity .15s; white-space: nowrap; }
+#hintText { position: absolute; left: 18px; top: 128px; padding: 6px 18px; border-radius: 999px; background: rgba(23,34,77,.86); color: #fff; font-size: 18px; font-weight: 900; opacity: 0; transition: opacity .15s; white-space: nowrap; }
 #hintText.on { opacity: 1; }
 #tmeter { position: absolute; right: 18px; bottom: 18px; transform: translateY(10px); width: 360px; padding: 7px 14px 8px; opacity: 0; transition: opacity .25s, transform .25s; }
 #tmeter.on { opacity: 1; transform: none; }
@@ -54,15 +54,15 @@ a { color: inherit; }
 .tm-res .arr { font-size: 24px; line-height: 1; } .tm-res .arr.L { color: #0284c7; } .tm-res .arr.R { color: #ea580c; } .tm-res .arr.C { color: #15803d; }
 #powerBar { position: absolute; left: 50%; bottom: 30px; transform: translateX(-50%); padding: 4px 12px; display: flex; align-items: center; gap: 10px; font-size: 15px; }
 #powerBar .pbar { width: 200px; height: 14px; border: 3px solid var(--ink); border-radius: 9px; background: #e5e9f5; overflow: hidden; } #powerBar i { display: block; height: 100%; background: linear-gradient(90deg, #34d399, #ffd23f, #ff5a5f); }
-#rallyChip { position: absolute; left: 50%; top: 18px; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 4px 16px; border-radius: 999px; font-size: 16px; }
-#keyhelp { position: absolute; right: 18px; top: 72px; padding: 8px 12px; font-size: 13px; line-height: 1.55; max-width: 260px; }
-#keyhelp b { display: block; font-size: 14px; margin-bottom: 2px; }
+#rallyChip { position: absolute; left: 50%; top: 56px; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 4px 16px; border-radius: 999px; font-size: 16px; }
+#keyhelp { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); display: flex; gap: 12px; padding: 5px 14px; font-size: 12px; background: rgba(255,255,255,.92); border: 3px solid var(--ink); border-radius: 999px; box-shadow: 3px 3px 0 var(--ink); white-space: nowrap; max-width: calc(100vw - 640px); overflow: hidden; }
+#keyhelp span { display: inline-flex; gap: 4px; align-items: center; }
 kbd { background: var(--yellow); border: 2px solid var(--ink); border-radius: 6px; padding: 0 5px; font-family: inherit; font-size: 12px; }
 
 /* popups */
 #popups, #banners { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
-.pop { position: absolute; transform: translate(-50%, -50%); font-weight: 900; text-align: center; white-space: nowrap; animation: popup 1.25s cubic-bezier(.2,.9,.3,1.2) forwards; text-shadow: 0 3px 0 rgba(23,34,77,.9), 3px 0 0 #17224d, -3px 0 0 #17224d, 0 -3px 0 #17224d, 2px 2px 0 #17224d, -2px -2px 0 #17224d, 2px -2px 0 #17224d, -2px 2px 0 #17224d; -webkit-text-stroke: 1px var(--ink); }
-.pop span { display: block; font-size: 56px; line-height: 1; } .pop small { display: block; font-size: 22px; margin-top: 2px; }
+.pop { position: absolute; transform: translate(-50%, -50%); font-weight: 900; text-align: center; white-space: nowrap; animation: popup 1.25s cubic-bezier(.2,.9,.3,1.2) forwards; -webkit-text-stroke: 8px var(--ink); paint-order: stroke fill; text-shadow: 0 5px 0 var(--ink); }
+.pop span { display: block; font-size: 56px; line-height: 1; } .pop small { display: block; font-size: 22px; margin-top: 2px; -webkit-text-stroke: 5px var(--ink); }
 .pop.perfect { color: #8dff6a; } .pop.perfect span { font-size: 72px; } .pop.early { color: #6fd8ff; } .pop.late { color: #ffb15c; } .pop.wide { color: #ff7a7a; }
 .pop.good { color: #ffe14a; } .pop.big { color: #ffe14a; animation-duration: 1.7s; } .pop.big span { font-size: 84px; }
 .pop.ace { color: #ff6ad5; animation-duration: 1.8s; } .pop.ace span { font-size: 96px; letter-spacing: 4px; }

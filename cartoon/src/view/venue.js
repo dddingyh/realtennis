@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { COURT } from '../../../src/config.js';
 import { THEMES } from '../../../src/render/stage.js';
 import { GeoBuilder, addPerson, toonMat, canvasTex, roundRect, gfxState } from './gfx.js';
-import { VENUE, TOURNEY, SURF_LOOK, makeCourtTexture, makeNetTexture, makePanelTexture, makeSkyTexture } from './court_tex.js';
+import { VENUE, TOURNEY, SURF_LOOK, makeCourtTexture, makeNetTexture, makeWallTexture, makeSkyTexture } from './court_tex.js';
 import { STANDS, roofHeightAt } from './stands.js';
 import { Crowd } from './crowd.js';
 
@@ -93,8 +93,8 @@ export class Venue {
     this._mesh(b.build(), toonMat('#ffffff', { vertexColors: true }), { cast: true, receive: true, name: 'boards' });
 
     // sponsor panel planes
-    const endTex = this._own(makePanelTexture(surface, 9, 224, 5));
-    const sideTex = this._own(makePanelTexture(surface, 4, 112, 8)); sideTex.wrapS = THREE.RepeatWrapping; sideTex.repeat.x = (BZ * 2) / (4 * 2.4);
+    const endTex = this._own(makeWallTexture(surface, BX * 2, 2.0, 'end'));
+    const sideTex = this._own(makeWallTexture(surface, BZ * 2, 1.2, 'side'));
     const mkPlane = (w, h, tex, x, y, z, ry) => {
       const m = this._mesh(new THREE.PlaneGeometry(w, h), toonMat('#ffffff', { map: tex }), { receive: true, name: 'panel' });
       m.position.set(x, y, z); m.rotation.y = ry; return m;
@@ -158,9 +158,9 @@ export class Venue {
     };
     ringTop(0.3, 0.9, 0.02, th.concrete);
     for (const t of treads) {
-      const d = t.o1 - t.o0, seat = t.tier === 1 ? th.seat2 : th.seat;
+      const d = t.o1 - t.o0, seat = darken(t.tier === 1 ? th.seat2 : th.seat, 1.8);
       if (t.seat) {
-        riser(t.o0, t.yPrev, t.y, t.tier === 1 ? darken(th.seat2, 0.8) : darken(th.seat, 0.8));
+        riser(t.o0, t.yPrev, t.y, t.tier === 1 ? darken(th.seat2, 1.3) : darken(th.seat, 1.3));
         ringTop(t.o0, t.o0 + d * 0.3, t.y, th.concrete);
         ringTop(t.o0 + d * 0.3, t.o1, t.y, ((t.row & 1) ? darken(seat, 1.12) : seat));
       } else { riser(t.o0, t.yPrev, t.y, th.concrete); ringTop(t.o0, t.o1, t.y, th.concrete); }
@@ -178,11 +178,11 @@ export class Venue {
     }
     this._mesh(b.build(), toonMat('#ffffff', { vertexColors: true }), { cast: true, receive: true, name: 'stands' });
     // textured fascia band (tournament/sponsor repeat)
-    const tex = this._own(makePanelTexture(this.surface, 4, 96, 17)); tex.wrapS = THREE.RepeatWrapping;
+    const tex = this._own(makeWallTexture(this.surface, 12, 1.2, 'fascia')); tex.wrapS = THREE.RepeatWrapping;
     const o = upFirst.o0, h = upFirst.y - STANDS.lowTopY, yc = STANDS.lowTopY + h / 2;
     const planes = [[2 * (BZ + o), BX + o + 0.01, 0, -Math.PI / 2], [2 * (BZ + o), -(BX + o + 0.01), 0, Math.PI / 2], [2 * (BX + o), 0, -(BZ + o + 0.01), 0], [2 * (BX + o), 0, BZ + o + 0.01, Math.PI]];
     for (const [len, x, z, ry] of planes) {
-      const t = tex.clone(); t.repeat.x = len / (4 * 3.2); t.needsUpdate = true; this._own(t);
+      const t = tex.clone(); t.repeat.x = len / 12; t.needsUpdate = true; this._own(t);
       const m = this._mesh(new THREE.PlaneGeometry(len, h), toonMat('#ffffff', { map: t }), { receive: true, name: 'fascia' });
       m.position.set(x, yc, z); m.rotation.y = ry;
       if (ry === -Math.PI / 2) m.position.x = x; // facing -x towards the court

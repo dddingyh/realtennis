@@ -44,13 +44,14 @@ export class Bot {
       if (oppAtNet && Math.abs(opp.pos.z) < 5 && rng.chance(0.55)) { shot = 'lob'; power = 0.45 + rng.gauss(0, 0.08); aimX = Math.abs(oppX) > 0.8 ? -Math.sign(oppX) * 1.6 : rng.pick([-1.6, 1.6]); }
       else if (oppAtNet) { shot = rng.chance(0.5) ? 'flat' : 'topspin'; power = 0.72 + rng.gauss(0, 0.08); aimX = Math.abs(oppX) > 0.5 ? -Math.sign(oppX) * 2.0 : rng.pick([-2.0, 2.0]); }
       else {
-        aimX = Math.abs(oppX) > 0.9 ? -Math.sign(oppX) * 1.9 : rng.pick([-1.7, 1.7]);
+        aimX = Math.abs(oppX) > 0.9 ? -Math.sign(oppX) * 2.5 : rng.pick([-2.2, 2.2]);
+        if (Math.abs(oppX) > 1.3) power = 0.82 + rng.gauss(0, 0.07);
         const u = rng.next();
         if (u < 0.15) shot = 'slice'; else if (u < 0.28) shot = 'flat';
       }
       const short = plan && Math.abs(plan.P.z) < 9.6 && plan.P.y > 0.5 && !oppAtNet;
-      if (this.kind === 'tactical' && short && me.zone === 'base' && rng.chance(0.45)) { sim.setNet(i, true); shot = 'flat'; power = 0.78 + rng.gauss(0, 0.06); aimX = -Math.sign(oppX || 1) * 2.0; }
-      const intended = sim.timingForAim(i, aimX);                      // ms (sim time)
+      if ((this.kind === 'tactical') && !process.env.NONET && short && me.zone === 'base' && rng.chance(0.45)) { sim.setNet(i, true); shot = 'flat'; power = 0.78 + rng.gauss(0, 0.06); aimX = -Math.sign(oppX || 1) * 2.0; }
+      const intended = sim.timingForAim(i, aimX * (+process.env.AIMK || 1));                      // ms (sim time)
       const err = rng.gauss(0, this.sigma * 1000);
       this.sched = { at: this.real + hint.contactIn + (intended + err) / 1000 / TS, shot, power: Math.min(1, Math.max(0.05, power)) };
     }
@@ -70,8 +71,8 @@ export class Bot {
     if (this.hitAt === null) {
       const g = sim._serveGeom(sim.P[i]);
       const first = st.match.faultCount === 0;
-      const x = this.kind === 'random' ? g.cx + rng.range(-1.6, 1.6) : g.boxSign * rng.pick([0.8, 3.1, 2.0, 3.2]);
-      const off = this.kind === 'random' ? rng.range(-120, 120) : sim.serveTimingForAim(i, x);
+      const x = (this.kind === 'random' || process.env.RSERVE) ? g.cx + rng.range(-1.6, 1.6) : g.boxSign * rng.pick([0.8, 3.1, 2.0, 3.2]);
+      const off = (this.kind === 'random' || process.env.RSERVE) ? rng.range(-120, 120) : sim.serveTimingForAim(i, x);
       this.hitAt = this.real + hint.contactIn + (off + rng.gauss(0, this.sigma * 1000)) / 1000 / TS;
       this.power = first ? Math.min(1, 0.85 + rng.gauss(0, 0.06)) : 0.55;
       if (this.kind === 'netAlways' || (this.kind === 'tactical' && rng.chance(0.08))) sim.setNet(i, true);

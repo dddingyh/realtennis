@@ -93,7 +93,7 @@ export class Animator {
     this.gripB = new V3(); this.sweetB = new V3(); this.tipB = new V3(); this.tossB = new V3(); this.shaftB = new V3();
     this.qRack = new Q();
     this.face = { mouth: 'neutral', brow: 'neutral', blink: 0, gx: 0, gy: 0 };
-    this.blinkT = 2; this.blinkPhase = -1; this.squash = 0; this.hipPrev = 0.92;
+    this.blinkT = 2; this.blinkPhase = -1; this.squash = 0; this.hipPrev = 0.86; this.sqPose = 0;
     this.celebT = 0;
     for (let i = 0; i < BONES.length; i++) this.bq[i].identity();
     this.P.set(BASE);
@@ -210,7 +210,7 @@ export class Animator {
 
   evalState(P, name, shot, a, ps, s, dt, ctx) {
     P.set(BASE);
-    this.ctW = 0; this.ctDelta.set(0, 0, 0); this.def = null;
+    this.ctW = 0; this.ctDelta.set(0, 0, 0); this.def = null; this.sqPose = 0;
     this.mode = 'stance'; this.thr = 0.17; this.bounce = 0;
     const t = this.t, st = this.stateT;
     const accel = a.accel != null ? clamp(a.accel, -1, 1) : 0;
@@ -320,6 +320,8 @@ export class Animator {
     ph = clamp(ph, 0, 1);
     this.phase = ph;
     evalTable(def.tbl, ph, P);
+    // baked squash & stretch: compress into the load, stretch through contact
+    this.sqPose = 0.045 * (Math.exp(-Math.pow((ph - (cp - 0.16)) / 0.08, 2)) * -1 + 1.2 * Math.exp(-Math.pow((ph - (cp + 0.12)) / 0.06, 2)));
     // stance
     const sp = def.stance;
     const c = a.contact;
@@ -351,7 +353,7 @@ export class Animator {
       P[F.hipX] += low * wb + R * 0.08 * wb;
     } else if (c) {
       P[F.heel] = clamp(P[F.heel] + clamp(dy, -0.3, 0.3), 0, 1);
-      P[F.jmp] += clamp(dy - 0.03, 0, 0.35) * wb;
+      P[F.jmp] += clamp(dy * 1.3 + 0.02, 0, 0.4) * wb;
     }
     // feet: widen with reach
     const wide = 1 + R * 0.45;
@@ -401,7 +403,7 @@ export class Animator {
           const e = su * su * (3 - 2 * su);
           ft.x = lerp(ft.sx, tx, e); ft.z = lerp(ft.sz, tz, e);
           ft.yaw = ft.syaw + wrap(tyaw - ft.syaw) * e;
-          const H = name === 'run' ? 0.08 + 0.2 * s : name === 'walk' ? 0.06 : name === 'shuffle' ? 0.05 : 0.07;
+          const H = name === 'run' ? 0.12 + 0.22 * s : name === 'walk' ? 0.06 : name === 'shuffle' ? 0.05 : 0.07;
           ft.y = H * Math.sin(Math.PI * su);
           ft.pitch = lerp(0.55, -0.3, su) * (name === 'run' ? 1 : 0.5);
         } else {
@@ -468,7 +470,7 @@ export class Animator {
     const sx = P[F.sx] + P[F.px] + cx, sz = P[F.sz] + P[F.pz] + cz;
     let y = hipTarget + cy;
     // leg reach limit
-    const R = 0.835;
+    const R = 0.745;
     for (let f = 0; f < 2; f++) {
       v[0].set(f ? -0.10 : 0.10, -0.02, 0).applyQuaternion(this.bq[0]);
       const hx = sx + v[0].x, hz = sz + v[0].z;
@@ -510,7 +512,7 @@ export class Animator {
     const poleD = v[4].set(0.6, -1 + 1.8 * P[F.eD], -0.35).applyQuaternion(qT);
     const poleN = v[5].set(-0.6, -1 + 1.8 * P[F.eN], -0.35).applyQuaternion(qT);
 
-    const hipTarget = 0.92 - P[F.hip] - P[F.hipX] + this.bounce + this.jumpLift;
+    const hipTarget = 0.86 - P[F.hip] - P[F.hipX] + this.bounce + this.jumpLift;
     // clavicle shrug for raised hands
     const shrD = clamp((grip.y - 1.45) / 0.9, 0, 1), shrN = clamp((nTarget.y - 1.45) / 0.9, 0, 1);
     bones[5].quaternion.setFromAxisAngle(v[6].set(0, 0, 1), 0.5 * shrD); bones[9].quaternion.setFromAxisAngle(v[6], -0.5 * shrN);
@@ -610,7 +612,7 @@ export class Animator {
       const dx = bpos.x - this.px, dz = bpos.z - this.pz;
       const xo = dx * this.cosP - dz * this.sinP, zc = dx * this.sinP + dz * this.cosP;
       const xc = this.m * xo;
-      const hy = 1.6;
+      const hy = 1.58;
       const yw = Math.atan2(xc - bp[4].x, zc - bp[4].z);
       const dh = Math.hypot(xc - bp[4].x, zc - bp[4].z);
       if (dh > 0.4) {

@@ -43,16 +43,15 @@ export function makeCourtTexture(surface) {
       }
       speckle(g, rnd, 0, 0, W, H, 26000, ['#ffffff', '#0a2a55', '#6aa0d8'], 1.4, 0.07);
       // painted sponsor wordmarks behind each baseline
-      g.save(); g.globalAlpha = 0.5; g.fillStyle = '#ffffff'; g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.font = `900 ${PPM * 1.5}px Arial Black, Arial, sans-serif`;
-      g.translate(X(0), Z(-13.7)); g.fillText('KORVA', 0, 0); g.restore();
-      g.save(); g.globalAlpha = 0.5; g.fillStyle = '#ffffff'; g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.font = `900 ${PPM * 1.5}px Arial Black, Arial, sans-serif`;
-      g.translate(X(0), Z(13.7)); g.fillText('KORVA', 0, 0); g.restore();
+      for (const zz of [-16.7, 16.7]) {
+        g.save(); g.globalAlpha = 0.17; g.fillStyle = '#ffffff'; g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.font = `900 ${PPM * 0.75}px Arial Black, Arial, sans-serif`;
+        g.translate(X(0), Z(zz)); g.fillText('KORVA', 0, 0); g.restore();
+      }
     } else if (surface === 'clay') {
       g.fillStyle = L.court; R(-9.4, -16.4, 9.4, 16.4);
       for (let i = 0; i < 90; i++) { // brush sweeps
-        g.strokeStyle = rnd() < 0.5 ? 'rgba(255,225,190,0.07)' : 'rgba(110,40,15,0.08)';
+        g.strokeStyle = rnd() < 0.5 ? 'rgba(255,225,190,0.04)' : 'rgba(110,40,15,0.045)';
         g.lineWidth = 4 + rnd() * 22; g.beginPath();
         const x0 = rnd() * W, y0 = rnd() * H, len = 300 + rnd() * 900, bend = (rnd() - 0.5) * 220;
         g.moveTo(x0, y0); g.quadraticCurveTo(x0 + bend, y0 + len * 0.5, x0 + bend * 0.4, y0 + len); g.stroke();
@@ -130,30 +129,31 @@ export function makeNetTexture(surface) {
   }, { aniso: true });
 }
 
-/** Strip of sponsor panels. `panels` panels, each 256x`h` px. */
-export function makePanelTexture(surface, panels, h = 224, seed = 5) {
+/** One continuous wall band in the theme colour with a few tone-on-tone wordmarks (symmetrical). kind: 'end' | 'side' | 'fascia' */
+export function makeWallTexture(surface, lenM, hM, kind) {
   const th = THEMES[surface];
-  const rnd = mulberry32(seed);
-  const brands = th.brands.map((n) => SPONSORS.find((s) => s.text === n)).filter(Boolean);
-  return canvasTex(256 * panels, h, (g, W, H) => {
-    for (let i = 0; i < panels; i++) {
-      const x = i * 256;
-      const kind = i % 3;
-      if (kind === 2) { // theme panel with tournament name
-        g.fillStyle = th.wall; g.fillRect(x, 0, 256, H);
-        g.fillStyle = th.wallLite; g.fillRect(x, H * 0.72, 256, H * 0.28);
-        g.fillStyle = th.text; g.font = `800 ${TOURNEY[surface].name.length > 14 ? 22 : 40}px Arial Black, Arial, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
-        wrapFill(g, TOURNEY[surface].name, x + 128, H * 0.36, 236, TOURNEY[surface].name.length > 14 ? 28 : 44);
-        g.fillStyle = th.accent; g.font = `700 24px sans-serif`; g.fillText(TOURNEY[surface].sub, x + 128, H * 0.86);
-      } else {
-        const b = brands[(i + (rnd() * 2 | 0)) % brands.length];
-        g.fillStyle = b.bg; g.fillRect(x, 0, 256, H);
-        g.fillStyle = b.ac; g.fillRect(x, H - 34, 256, 10); g.globalAlpha = 0.9; g.fillRect(x + 20, 30, 28, 28); g.globalAlpha = 1;
-        g.fillStyle = b.fg; g.font = '900 46px Arial Black, Arial, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
-        g.fillText(b.text, x + 134, H * 0.47);
-      }
-      g.fillStyle = 'rgba(0,0,0,0.35)'; g.fillRect(x, 0, 3, H); g.fillRect(x + 253, 0, 3, H);
+  const ppm = kind === 'fascia' ? 64 : 92;
+  const W = Math.min(4096, Math.round(lenM * ppm)), H = Math.round(hM * ppm), k = W / lenM;
+  const [A, B] = th.brands;
+  return canvasTex(W, H, (g) => {
+    const gr = g.createLinearGradient(0, 0, 0, H);
+    gr.addColorStop(0, th.wallLite); gr.addColorStop(0.35, th.wall); gr.addColorStop(1, th.wall);
+    g.fillStyle = gr; g.fillRect(0, 0, W, H);
+    g.fillStyle = 'rgba(255,255,255,0.10)'; g.fillRect(0, H * 0.06, W, Math.max(2, H * 0.03));
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    const mark = (txt, xm, size, alpha, accent) => {
+      g.save(); g.translate(W / 2 + xm * k, H * 0.5); g.globalAlpha = alpha; g.fillStyle = accent ? th.accent : '#ffffff';
+      g.font = `900 ${Math.round(size * k)}px Arial Black, Arial, sans-serif`; g.fillText(txt, 0, 0); g.restore();
+    };
+    if (kind === 'fascia') {
+      mark(TOURNEY[surface].name, 0, 0.5, 0.22, false); return;
     }
+    const big = Math.min(0.46 * hM / 1.0, 0.62);
+    const tn = TOURNEY[surface].name; const tsz = tn.length > 14 ? big * 0.62 : big;
+    mark(tn, 0, tsz, 0.93, false);
+    g.save(); g.globalAlpha = 0.8; g.fillStyle = th.accent; g.font = `800 ${Math.round(0.17 * k)}px sans-serif`; g.fillText(TOURNEY[surface].sub, W / 2, H * 0.5 + tsz * 0.62 * k + 2); g.restore();
+    const pos = kind === 'end' ? [[6.3, A, 0.4]] : [[7.5, A, 0.36], [14, B, 0.34]];
+    for (const [x, name, sz] of pos) for (const sg of [-1, 1]) mark(name, sg * x, sz, 0.5, false);
   });
 }
 function wrapFill(g, text, cx, cy, maxW, lh) {

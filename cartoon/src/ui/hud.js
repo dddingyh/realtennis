@@ -43,7 +43,7 @@ export function createHud(root) {
   </div>
   <div id="powerBar" class="panel hidden"><span class="pn"></span><div class="pbar"><i></i></div></div>
   <div id="rallyChip" class="hidden"></div>
-  <div id="keyhelp" class="panel hidden"></div>`;
+  <div id="keyhelp" class="hidden"></div>`;
   const R = {
     bug: $('#bug', root), rows: [0, 1].map((i) => $(`.brow[data-i="${i}"]`, root)),
     serveSpeed: $('#serveSpeed', root), ptNote: $('#ptNote', root),
@@ -56,17 +56,16 @@ export function createHud(root) {
   const popLayer = $('#popups'), bannerLayer = $('#banners');
 
   function setKeyHelp(help) {
-    let html = '';
+    let items = [];
     if (Array.isArray(help)) {
-      html = help.map((h) => {
-        if (typeof h === 'string') return `<div>${h}</div>`;
-        if (Array.isArray(h)) return `<div><kbd>${h[0]}</kbd> ${h[1] || ''}</div>`;
-        if (h && typeof h === 'object') return `<div><kbd>${h.keys || h.key || ''}</kbd> ${h.text || h.desc || h.label || ''}</div>`;
-        return '';
-      }).join('');
-    } else if (typeof help === 'string') html = `<div>${help}</div>`;
-    else if (help && typeof help === 'object') html = Object.entries(help).map(([k, v]) => `<div><kbd>${k}</kbd> ${v}</div>`).join('');
-    R.keyhelp.innerHTML = '<b>键盘操作</b>' + html;
+      items = help.map((h) => {
+        if (typeof h === 'string') return null;
+        const k = Array.isArray(h) ? h[0] : (h.keys || h.key || ''), t = Array.isArray(h) ? h[1] : (h.text || h.desc || '');
+        if (!k || k === '时机') return null;
+        return `<span><kbd>${k}</kbd>${String(t).split(/[（(，,]/)[0]}</span>`;
+      }).filter(Boolean);
+    }
+    R.keyhelp.innerHTML = items.join('');
     R.stanceKeys.textContent = 'W / ↑ / Shift 上网·回底线';
   }
 

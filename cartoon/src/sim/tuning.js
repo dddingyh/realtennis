@@ -9,10 +9,10 @@ export const AIM_X = 3.45;          // lateral target (m) at |dir| = 1 (sideline
 export const AIM_WIDE = 3.4;        // extra metres of drag at |dir| = 1.7 (T_MISS)
 
 // ---- movement
-export const VMAX = 5.0;            // top running speed (m/s)
-export const ACC = 10;                // acceleration (m/s^2)
-export const DEC = 13;              // braking
-export const RUSH_VMAX = 5.6;       // sprint toward the net
+export const VMAX = 4.2;            // top running speed (m/s)
+export const ACC = 8;                 // acceleration (m/s^2)
+export const DEC = 11;              // braking
+export const RUSH_VMAX = 5.0;       // sprint toward the net
 export const WALK_SPEED = 3.4;      // between points
 export const HUMAN_REACTION = 0.17; // auto-movement reaction after the opponent's contact (s)
 export const SETUP_TIME = 0.10;     // wanted time standing still before contact
@@ -43,3 +43,15 @@ export const SERVE = {
   catchAfter: 0.42,                 // no hit this long after the apex => toss is wasted (re-toss, no fault)
   contactBack: 0.12,                // contact point is this far inside the baseline
 };
+
+// ---- timing -> lateral target curve: x = AIM_X * (1 - (1 - |dir|)^AIM_CURVE); a moderate timing offset already
+// opens the court (so a human with ~45 ms timing error can still place the ball), the last bit toward the line is costly.
+export const AIM_CURVE = 1.7;
+export function aimToX(aim) {
+  const a = Math.abs(aim), s = aim < 0 ? -1 : 1;
+  return a <= 1 ? s * AIM_X * (1 - Math.pow(1 - a, AIM_CURVE)) : s * (AIM_X + (a - 1) * AIM_WIDE / 0.7);
+}
+export function xToAim(x) {
+  const a = Math.min(1, Math.abs(x) / AIM_X), s = x < 0 ? -1 : 1;
+  return s * (1 - Math.pow(1 - a, 1 / AIM_CURVE));
+}

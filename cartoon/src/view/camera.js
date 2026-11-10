@@ -8,7 +8,7 @@ const sstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t 
 export class CameraRig {
   constructor(camera) {
     this.cam = camera;
-    this.cfg = { z: 18.7, y: 6.1, fov: 52, lookZ: 5.0, lookY: 0.0 };
+    this.cfg = { z: 26.5, y: 7.8, fov: 32.5, lookZ: 2.4, lookY: 0.0 };
     this.s = { x: 0, y: this.cfg.y, z: this.cfg.z, fov: this.cfg.fov, lx: 0, ly: this.cfg.lookY, lz: this.cfg.lookZ, shake: 0, t: 0 };
     this.target = new THREE.Vector3();
     this.mode = 'menu';
@@ -22,7 +22,7 @@ export class CameraRig {
     let tx = 0, ty = c.y, tz = c.z, tf = c.fov, lx = 0, ly = c.lookY, lz = c.lookZ;
     if (this.mode === 'menu' || !state) {
       const t = s.t;
-      tx = Math.sin(t * 0.17) * 4.5; ty = 8.2 + Math.sin(t * 0.11) * 0.5; tz = 21.5; lx = tx * 0.3; lz = -2; ly = 1.2; tf = 50;
+      tx = Math.sin(t * 0.17) * 4.5; ty = 8.2 + Math.sin(t * 0.11) * 0.5; tz = 21.5; lx = tx * 0.3; lz = -2; ly = 1.2; tf = 46;
     } else {
       const me = state.players[humanIdx];
       const ball = state.ball;
@@ -30,15 +30,16 @@ export class CameraRig {
       const px = me ? me.pos.x : 0, pz = me ? me.pos.z : c.z;
       const bx = ballOn ? ball.pos.x : px;
       const netK = sstep(10.5, 4.5, pz);
+      const backK = clamp(pz - 12.4, 0, 3);
       const focus = 0.5 * px + 0.22 * bx;
       tx = clamp(focus * 0.62, -3.3, 3.3);
       lx = clamp(focus * 0.5, -3.6, 3.6) * 0.8;
-      tz = c.z - netK * 3.0; ty = c.y - netK * 0.4; tf = c.fov - netK * 6; lz = c.lookZ - netK * 5.5;
+      tz = c.z - netK * 4.5; ty = c.y - netK * 0.4; tf = c.fov - netK * 3.5; lz = c.lookZ - netK * 6.0 + backK * 1.4;
       const ph = state.match && state.match.phase;
       if (ph === 'serve-prep' || ph === 'serving' || ph === 'changeover') {
         const mine = state.match.server === humanIdx;
         const k = ph === 'changeover' ? 0 : 1;
-        if (mine) { tz -= 0.5 * k; ty -= 0.25 * k; tf -= 1.5 * k; lx = lx * 0.6; tx = tx * 0.7; }
+        if (mine) { tz -= 0.8 * k; ty -= 0.2 * k; tf -= 1.0 * k; lx = lx * 0.6; tx = tx * 0.7; }
         else { ty += 0.5 * k; tf += 0 * k; }
       }
       if (ph === 'match-over') { tx = Math.sin(s.t * 0.3) * 3.5; ty = c.y + 1.5; tf = c.fov + 3; }
