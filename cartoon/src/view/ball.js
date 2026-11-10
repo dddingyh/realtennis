@@ -183,7 +183,7 @@ export class BallView {
     this.glow.position.set(p.x, p.y, p.z); this.glow.scale.setScalar(r * 5.2);
     // ground shadow decal
     const h = Math.max(0, p.y);
-    const sr = (0.06 + 0.0042 * dist) * (1 + h * 0.05);
+    const sr = (0.075 + 0.0046 * dist) * (1 + h * 0.05);
     this.shadow.position.set(p.x, 0.012, p.z); this.shadow.scale.set(sr * 2.4, 1, sr * 2.4);
     this.shadow.material.opacity = Math.max(0.45, 1 - h * 0.08);
     this._updateTrail(dt, p, camera, r, speed);

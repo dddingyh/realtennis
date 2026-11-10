@@ -208,7 +208,7 @@ export class ArcadeSim {
     p.wantNet = v;
     const z = Math.abs(p.pos.z);
     if (v) {
-      if (p.zone === 'base' || p.zone === 'toBase') { this._zone(p, 'toNet'); if (this.phase === 'rally' || this.phase === 'serving') this._noteApproach(p); }
+      if (p.zone === 'base' || p.zone === 'toBase') { this._zone(p, 'toNet'); if (this.phase === 'rally' || this.phase === 'serving') { this._noteApproach(p); p.stamina = clamp(p.stamina - K.STAMINA.rush, 0, 1); } }
     } else if (p.zone === 'net' || p.zone === 'toNet') this._zone(p, 'toBase');
     p.recover = this._home(p);
     if (z > 99) p.recover = this._home(p);
@@ -473,7 +473,7 @@ export class ArcadeSim {
     else if (cls === 'forced') S.forced[loserIdx]++;
     else if (cls === 'unforced') S.unforced[loserIdx]++;
     if (reason === 'double-fault') S.doubleFaults[loserIdx]++;
-    for (const p of this.P) if (p.netThisPoint) { S.netPoints[p.i]++; if (winner === p.i) S.netPointsWon[p.i]++; }
+    for (const p of this.P) if (p.netThisPoint || p.approachThisPoint) { S.netPoints[p.i]++; if (winner === p.i) S.netPointsWon[p.i]++; }
     if (reason === 'service-winner') S.returnErrors[loserIdx]++;
     S.rallies.push(rl.shots);
     const serverBefore = m.server;
@@ -584,7 +584,7 @@ export class ArcadeSim {
     const g = this._serveGeom(p);
     const stats = this.stats;
     if (first) { stats.firstServes[p.i]++; }
-    const tau = ts - sv.tRel;
+    const tau = this.time - sv.tRel;          // the ball is hit where it really is now (timing was judged at ts): no teleport
     const pos = { x: sv.x, y: K.SERVE.releaseY + sv.vy0 * tau - 0.5 * G * tau * tau, z: sv.z };
     const now = this.time;
     p.serveAnim.hit = ts;
@@ -630,7 +630,7 @@ export class ArcadeSim {
     this.sv.stage = 'hit';
     this.ballAttach = null;
     this.rl = {
-      live: true, hitter: p.i, serve: true, shots: 1, lastHitTime: ts, cord: false, valid: false, firstBounce: false, crossed: false,
+      live: true, hitter: p.i, serve: true, shots: 1, lastHitTime: now, cord: false, valid: false, firstBounce: false, crossed: false,
       boxSign: g.boxSign, returned: false, recvInfeasible: false, first,
     };
     const spd = Math.hypot(sc.vel.x, sc.vel.y, sc.vel.z) * KMH;
@@ -641,7 +641,6 @@ export class ArcadeSim {
     p.serveAnim.contactPos = pos;
     this.emit({ type: 'hit', by: p.i, shot: shot.shot, side: 'fh', timing: label, timingMs: shot.timingMs, dir: shot.dir, aim: shot.aim, power, quality: q, speedKmh: spd,
       pos: { x: pos.x, y: pos.y, z: pos.z }, serve: true, mishit: shot.mishit, first });
-    if (now - ts > 1e-6) this._catchUp(now - ts);
     this._afterHit(p, null);
     p.vy = 2.6; p.y = 0.0;
     if (p.wantNet) { this._zone(p, 'toNet'); this._noteApproach(p); }
@@ -655,6 +654,16 @@ export class ArcadeSim {
     p.plan = null;
     opp.splitUntil = this.time + 0.16;
     opp.reactUntil = this.time + opp.reaction;
+    if (landing && !rl.serve) {
+      const nm = p.zone === 'toNet' || p.zone === 'net' ? K.PRESSURE_NET : 1;      // pressure counts double behind a ball you follow to the net
+      // a deep / wide / fast ball takes the opponent's time away (he reads it later and is stretched); a short soft one gives it back
+      const speedK = this.lastShot ? this.lastShot.speedKmh : 100;
+      const stretch = clamp(Math.abs(landing.x - opp.pos.x) / 3.2, 0, 1);
+      const deep = clamp((2.6 - (HALF - Math.abs(landing.z))) / 2.6, 0, 1);
+      const gp = 0.6 * stretch + 0.25 * deep + 0.15 * clamp((speedK - 95) / 45, 0, 1);
+      opp.reactUntil += K.PRESSURE_REACT * nm * (gp - 0.35);
+      opp.incomingGp = gp * nm;
+    } else opp.incomingGp = 0;
     p.recover = this._home(p, landing);
     this._planFor(opp, null);
     if (rl.serve && opp.plan === null) rl.recvInfeasible = false;
@@ -732,7 +741,7 @@ export class ArcadeSim {
       let kind = null, comfort = 0;
       if (nb === 0 && b0 === 0) {
         if (y >= 2.0 && y <= K.SMASH_Y && az <= 9.6) { kind = 'smash'; comfort = 1; }
-        else if (netMode && az <= 7.4 && y >= 0.45 && y <= 2.0) { kind = 'volley'; comfort = y >= 0.65 && y <= 1.7 ? 1 : 0.5; }
+        else if (netMode && az <= 7.4 && y >= 0.45 && y <= 2.0) { kind = 'volley'; comfort = y >= 0.65 && y <= 2.0 ? 1 : 0.5; }
       } else if (b0 === 0 ? nb === 1 : true) {
         if (y >= 0.6 && y <= 1.6) { kind = 'ground'; comfort = 1; }
         else if (y >= 0.32 && y <= 2.15) { kind = 'ground'; comfort = 0.4; }
@@ -767,12 +776,22 @@ export class ArcadeSim {
         if (dd < 0.09 && e.margin >= -K.SETUP_TIME - 0.03 && dd < bestd) { bestd = dd; chosen = { c, e }; }
       }
     }
+    if (!chosen && netMode) {
+      // a net player takes the ball out of the air at a good volley position (~4.4 m from the net), set and balanced
+      let bd = 1e9;
+      for (const c of cands) {
+        if (c.kind !== 'volley' || c.comfort < 1) continue;
+        const e = evalCand(c);
+        const d = e.d + 0.2 * Math.abs(Math.abs(c.s.z) - 4.4);
+        if (e.margin >= 0.18 && d < bd) { bd = d; chosen = { c, e }; }
+      }
+    }
     if (!chosen) {
       for (const pass of [0.12, 0.0]) {
         for (const c of cands) {
           if (c.comfort < 1 && pass > 0) continue;
           const e = evalCand(c);
-          if (e.margin >= pass) { chosen = { c, e }; break; }
+          if (e.margin >= pass + (c.kind === 'volley' && pass > 0 ? 0.2 : 0)) { chosen = { c, e }; break; }
         }
         if (chosen) break;
       }
@@ -813,17 +832,20 @@ export class ArcadeSim {
   _resolve(p) {
     const plan = p.plan, sw = plan.swing;
     plan.resolved = true;
-    if (!plan.snap) this._snapPlan(p);
-    const snap = plan.snap;
-    const tb = clamp(sw.ts, plan.tContact, plan.tContact + 0.045);
+    // The ball is struck where it really is NOW (after an early swing was buffered, or a late / remote swing arrived);
+    // only the timing t (judged at the swing's own time, ageMs compensated) is historical. No rewind of the ball => no teleport.
+    const snap = { pos: p.pos, vel: p.vel, stamina: p.stamina };
+    const tb = this.time;
     const B = this._ballAt(tb);
     const kind = this._kindFor(plan, sw.shot);
     const loc = this._local(p, plan.side, snap.pos, B.pos);
+    const vfwd0 = snap.vel.z * -p.facing;                                       // + = running toward the net
     const spd = Math.hypot(snap.vel.x, snap.vel.z);
+    const spdEff = Math.hypot(snap.vel.x, vfwd0 > 0 ? vfwd0 * 0.3 : vfwd0 * 1.3);   // stepping into the ball is cheap, backing off is not
     const maxR = K.REACH[plan.side] + K.LUNGE * clamp(spd / 6, 0, 1);
     const reachY = kind === 'smash' ? K.SMASH_Y : K.REACH_Y;
     p.sw.done = false;
-    if (loc.lat > maxR + 0.12 || loc.lat < -0.45 || B.pos.y > reachY + 0.25 || loc.fwd < -1.5 || loc.fwd > 2.4) {
+    if (loc.lat > maxR + 0.12 || loc.lat < -0.45 || B.pos.y > reachY + 0.25 || loc.fwd < -3.4 || loc.fwd > 2.4) {
       p.sw.whiff = true; p.cooldown = 0.35;
       this.emit({ type: 'whiff', by: p.i, reason: 'reach' });
       p.plan = null;
@@ -837,8 +859,9 @@ export class ArcadeSim {
     const rd = Math.hypot(snap.pos.x - plan.standTrue.x, snap.pos.z - plan.standTrue.z);
     const reachT = clamp((loc.lat - 1.0) / Math.max(0.1, maxR - 1.0), 0, 1);
     const vf = (snap.vel.z * -p.facing);
-    const back = vf < -1.5 ? clamp((-vf - 1.5) / 2.5, 0, 1) * 0.45 : 0;
-    const setv = clamp(1 - 0.5 * clamp(spd / (K.VMAX * 0.9), 0, 1) - 0.35 * clamp(rd / 1.1, 0, 1) - 0.5 * reachT - back, 0, 1);
+    const back = vf < -1.5 ? clamp((-vf - 1.5) / 2.5, 0, 1) * 0.6 : 0;
+    const setv = clamp(1 - 0.5 * clamp(spdEff / (K.VMAX * 0.9), 0, 1) - 0.35 * clamp(rd / 1.1, 0, 1) - 0.5 * reachT - back, 0, 1);
+    if (process.env.DBGV && kind === 'volley' && p.human) console.log('V spd', spd.toFixed(1), 'rd', rd.toFixed(2), 'reachT', reachT.toFixed(2), 'back', back.toFixed(2), 'set', setv.toFixed(2), 'z', snap.pos.z.toFixed(1), 'margin', plan.margin.toFixed(2));
     const vIn = Math.hypot(B.vel.x, B.vel.y, B.vel.z);
     const fPace = clamp(1 - 0.014 * Math.max(0, vIn - 22), 0.55, 1);
     const y = B.pos.y;
@@ -851,8 +874,9 @@ export class ArcadeSim {
     if (at <= win.T_PERFECT) fT = 1;
     else if (at <= K.T_FULL) fT = lerp(1, 0.88, (at - win.T_PERFECT) / (K.T_FULL - win.T_PERFECT));
     else fT = 0.88 - 0.4 * clamp((at - K.T_FULL) / (K.T_MISS - K.T_FULL), 0, 1);
-    let q = clamp((0.1 + 0.9 * setv) * fPace * fH * fS * fT, 0, 1);
-    if (p.zone === 'toNet' && kind !== 'smash') q *= 0.86;           // hitting on the run in no-man's land
+    const fGp = Math.max(0.15, 1 - K.PRESSURE_Q * Math.max(0, (p.incomingGp || 0) - 0.3) / 0.7);     // cramped by a deep / wide / fast incoming ball
+    const fLate = 1 - 0.12 * clamp((-loc.fwd - 0.5) / 2.5, 0, 1);   // contact far behind the ideal point (late swing)
+    let q = clamp(fGp * fLate * (0.1 + 0.9 * setv) * fPace * fH * fS * fT, 0, 1);
     const mishit = label === 'wide' ? 'wide' : (reachT > 0.8 ? 'stretch' : null);
     // ---- target
     const dirT = clamp(t / K.T_FULL, -1.7, 1.7);
@@ -890,12 +914,16 @@ export class ArcadeSim {
       if (!isDrop) speed += (kind === 'volley' ? 0.26 : 0.1) * Math.max(0, vIn - 12);
       if (label === 'wide') speed *= 1 - 0.2 * uW;
       speed = Math.max(speed, 8);
+      if (kind === 'volley' && setv >= 0.8 && !isDrop) tx = clamp(tx * 1.25, -3.95, 3.95);      // a set volley opens sharper angles
       sol = solveLaunch({ pos: B.pos, target: { x: tx, z: tz }, speed, top, surface: this.surface, clear: params.clear });
     }
     // ---- scatter
     const edge = clamp(1 - Math.min(COURT.singlesHalfWidth - Math.abs(tx), isDrop ? 3 : Math.abs(tz) > 0 ? HALF - Math.abs(tz) : 3) / 2.2, 0, 1);
-    const pw = 0.72 + 0.56 * power;
-    const kScale = kind === 'smash' ? 1.15 : kind === 'volley' ? 1.8 : kind === 'lob' ? 0.9 : 1;
+    // threading a passing shot past a set net player is hard (lobs are the answer); a net player caught in transit is not a problem
+    const oppP = this.P[1 - p.i];
+    const netPres = (kind !== 'lob' && (oppP.zone === 'net' || (oppP.zone === 'toNet' && Math.abs(oppP.pos.z) < 7.5))) ? 1 + K.NET_PRESSURE * Math.pow(oppP.set, 2) : 1;
+    const pw = (0.72 + 0.56 * power) * netPres;
+    const kScale = kind === 'smash' ? 1.15 : kind === 'volley' ? 0.5 + 3.2 * (1 - setv) : kind === 'lob' ? 0.9 : 1;
     const sd = (0.16 + 1.9 * Math.pow(1 - q, 1.3)) * pw * (1 + 0.45 * edge) * kScale + (label === 'wide' ? 0.9 * uW : 0);
     const sl = (0.2 + 2.2 * Math.pow(1 - q, 1.3)) * pw * (1 + 1.5 * edge) * kScale + (label === 'wide' ? 0.7 * uW : 0);
     const sCl = (0.06 + 0.6 * Math.pow(1 - q, 1.2)) * pw * kScale + (label === 'wide' ? 0.2 * uW : 0);
@@ -929,7 +957,7 @@ export class ArcadeSim {
     if (now - tb > 1e-6) this._catchUp(now - tb);
     if (Math.abs(snap.pos.z) <= K.NET_ARRIVE + 0.5) p.netThisPoint = true;
     if (Math.abs(snap.pos.z) > 9.2 && p.wantNet && !p.human) { /* AI manages its own net state */ }
-    if (Math.abs(snap.pos.z) > 9.4 && p.wantNet) this._setNet(p, false);
+    if (Math.abs(snap.pos.z) > HALF - 0.3 && p.wantNet) this._setNet(p, false);
     p.deep = Math.abs(snap.pos.z) > K.BASE_Z + 0.8 && q < 0.6;
     p.plan = null;
     p.cooldown = 0.25;
@@ -955,6 +983,7 @@ export class ArcadeSim {
       const pl = p.plan;
       if (pl && !pl.expired) {
         if (time >= p.reactUntil) { target = pl.stand; arriveBy = pl.tContact - K.SETUP_TIME; kind = 'chase'; }
+        if (time > pl.tContact && !pl.swing) { target = this._standFor(p, pl.side, this.b.pos, pl.kind); arriveBy = 0; vcap *= 1.15; kind = 'chase'; }
       } else {
         target = p.recover; kind = 'recover';
         if (p.zone === 'toNet') vcap = K.RUSH_VMAX; else if (p.zone === 'toBase') vcap = this._vmaxOf(p) * 0.92; else vcap *= 0.7;
@@ -984,7 +1013,7 @@ export class ArcadeSim {
     }
     const curS = Math.hypot(p.vel.x, p.vel.z);
     const desS = Math.hypot(dvx, dvz);
-    const lim = (desS < curS ? K.DEC : K.ACC) * h;
+    const lim = (desS < curS ? K.DEC : (p.zone === 'toNet' ? K.RUSH_ACC : K.ACC)) * h;
     let ex = dvx - p.vel.x, ez = dvz - p.vel.z;
     const em = Math.hypot(ex, ez);
     if (em > lim) { ex *= lim / em; ez *= lim / em; }

@@ -206,21 +206,72 @@ console.log('latency compensation (ageMs)');
     const arriveT = swingT + ageMs / 1000 * ts;
     stepTo(sim, Math.round(arriveT * 120) / 120);
     sim.swing(0, { shot: 'topspin', power: 0.6, ageMs, source: 'remote' });
-    stepTo(sim, Math.round((swingT + 0.5) * 120) / 120);
+    stepTo(sim, Math.round((swingT + 0.05) * 120) / 120);
     return sim;
   };
+  const landing = (sim) => { const f = flightInfo(sim); return f.landing; };
   for (const [late, ts] of [[60, 1], [90, 0.8], [-30, 0.8]]) {
     const a = run(late, 0, ts), b = run(late, 125, ts);
     const la = a.lastShot, lb = b.lastShot;
-    const same = la && lb && la.timing === lb.timing && Math.abs(la.timingMs - lb.timingMs) <= 9 && Math.abs(la.target.x - lb.target.x) < 0.2 && Math.abs(la.speedKmh - lb.speedKmh) < 2;
-    const dBall = Math.hypot(a.b.pos.x - b.b.pos.x, a.b.pos.y - b.b.pos.y, a.b.pos.z - b.b.pos.z);
-    check(`late ${late} ms @timeScale ${ts}: swing delivered 125 ms (real) late with ageMs=125 gives the same result`, same && dBall < 0.35,
-      `${la ? la.timingMs : '-'} vs ${lb ? lb.timingMs : '-'} ms, target x ${la ? f2(la.target.x) : '-'} vs ${lb ? f2(lb.target.x) : '-'}, ball diff ${f2(dBall)} m`);
+    const same = la && lb && la.timing === lb.timing && Math.abs(la.timingMs - lb.timingMs) <= 9 && Math.abs(la.target.x - lb.target.x) < 0.2 && Math.abs(la.speedKmh - lb.speedKmh) < 8;
+    const A = landing(a), B2 = landing(b);
+    const dBall = A && B2 ? Math.hypot(A.x - B2.x, A.z - B2.z) : 99;
+    check(`late ${late} ms @timeScale ${ts}: swing delivered 125 ms (real) late with ageMs=125 gives the same result`, same && dBall < 0.8,
+      `${la ? la.timingMs : '-'} vs ${lb ? lb.timingMs : '-'} ms, target x ${la ? f2(la.target.x) : '-'} vs ${lb ? f2(lb.target.x) : '-'}, landing diff ${f2(dBall)} m`);
   }
   // without compensation the same delayed swing would read as 100 ms later
   const c = (() => { const sim = mkSim({ seed: 21 }); sim.debugFeed(1, { target: { x: 0.5, z: HALF - 3 }, speedKmh: 98 }); stepWhile(sim, () => !sim.P[0].plan); stepTo(sim, Math.round((sim.P[0].plan.tContact + 0.06 + 0.1) * 120) / 120); sim.swing(0, { shot: 'topspin', power: 0.6, ageMs: 0, source: 'remote' }); return sim.lastShot; })();
   const d = run(60, 100, 1).lastShot;
   check('without ageMs the delayed swing reads ~100 ms later', c && d && c.timingMs - d.timingMs > 80, `${c ? c.timingMs : '-'} vs ${d ? d.timingMs : '-'}`);
+}
+
+// ------------------------------------------------------------------ 7b. no ball teleport at impact
+console.log('impact continuity (ball position jump at the moment of contact)');
+{
+  // jump = distance between the reported contact position and where the ball already was (extrapolated one step)
+  const measure = (offMs, ageMs, ts) => {
+    const sim = mkSim({ seed: 31, timeScale: ts });
+    sim.debugFeed(1, { target: { x: 0.8, z: HALF - 3 }, speedKmh: 100 });
+    stepWhile(sim, () => !sim.P[0].plan);
+    const swingT = sim.P[0].plan.tContact + offMs / 1000;
+    const arrive = swingT + ageMs / 1000 * ts;
+    stepTo(sim, Math.round(arrive * 120) / 120);
+    const pre = { x: sim.b.pos.x, y: sim.b.pos.y, z: sim.b.pos.z, vx: sim.b.vel.x, vy: sim.b.vel.y, vz: sim.b.vel.z };
+    const n0 = sim.log.length;
+    let steps = 0;
+    sim.swing(0, { shot: 'topspin', power: 0.6, ageMs, source: ageMs ? 'remote' : 'keyboard' });
+    sim.drainEvents().forEach((e) => sim.log.push(e));
+    let ev = sim.log.slice(n0).find((e) => e.type === 'hit');
+    let ref = pre;
+    while (!ev && steps < 60) {
+      ref = { x: sim.b.pos.x + sim.b.vel.x * H, y: sim.b.pos.y + sim.b.vel.y * H, z: sim.b.pos.z + sim.b.vel.z * H };
+      stepOnce(sim); steps++;
+      ev = sim.log.slice(n0).find((e) => e.type === 'hit');
+    }
+    if (!ev) return null;
+    return Math.hypot(ev.pos.x - ref.x, ev.pos.y - ref.y, ev.pos.z - ref.z);
+  };
+  let maxK = 0, maxR = 0, n = 0;
+  for (const off of [-120, -60, 0, 40, 90, 140, 200]) { const j = measure(off, 0, 0.8); if (j != null) { maxK = Math.max(maxK, j); n++; } }
+  for (const age of [80, 100, 120]) for (const off of [-60, 0, 60, 120]) { const j = measure(off, age, 0.8); if (j != null) { maxR = Math.max(maxR, j); n++; } }
+  console.log(`   max position discontinuity at impact: keyboard ${maxK.toFixed(3)} m, remote (80..120 ms) ${maxR.toFixed(3)} m  (${n} swings)`);
+  check('keyboard: the ball is struck exactly where it is (no teleport, even for late swings)', maxK < 0.05, `${maxK.toFixed(3)} m`);
+  check('remote 80-120 ms: no teleport either (timing is rewound, the ball is not)', maxR < 0.05, `${maxR.toFixed(3)} m`);
+  // late contact is reported as deeper / behind the ideal point in anim.contact
+  const s2 = mkSim({ seed: 31 });
+  s2.debugFeed(1, { target: { x: 0.8, z: HALF - 3 }, speedKmh: 100 });
+  stepWhile(s2, () => !s2.P[0].plan);
+  const c0 = s2.P[0].plan.tContact;
+  stepTo(s2, c0 + 0.13);
+  s2.swing(0, { shot: 'topspin', power: 0.6 });
+  const fwdLate = s2.P[0].sw && s2.P[0].sw.contact ? s2.P[0].sw.contact.fwd : null;
+  const s3 = mkSim({ seed: 31 });
+  s3.debugFeed(1, { target: { x: 0.8, z: HALF - 3 }, speedKmh: 100 });
+  stepWhile(s3, () => !s3.P[0].plan);
+  stepTo(s3, s3.P[0].plan.tContact);
+  s3.swing(0, { shot: 'topspin', power: 0.6 });
+  const fwdOn = s3.P[0].sw && s3.P[0].sw.contact ? s3.P[0].sw.contact.fwd : null;
+  check('a late swing makes contact later and deeper (anim.contact.fwd smaller), not at the ideal point', fwdLate != null && fwdOn != null && fwdLate < fwdOn - 0.3, `fwd ${fwdLate && fwdLate.toFixed(2)} vs ${fwdOn && fwdOn.toFixed(2)} m`);
 }
 
 // ------------------------------------------------------------------ 8. serve

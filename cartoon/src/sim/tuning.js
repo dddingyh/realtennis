@@ -12,7 +12,7 @@ export const AIM_WIDE = 3.4;        // extra metres of drag at |dir| = 1.7 (T_MI
 export const VMAX = 4.2;            // top running speed (m/s)
 export const ACC = 8;                 // acceleration (m/s^2)
 export const DEC = 11;              // braking
-export const RUSH_VMAX = 5.0;       // sprint toward the net
+export const RUSH_VMAX = 5.8;       // sprint toward the net
 export const WALK_SPEED = 3.4;      // between points
 export const HUMAN_REACTION = 0.17; // auto-movement reaction after the opponent's contact (s)
 export const SETUP_TIME = 0.10;     // wanted time standing still before contact
@@ -34,7 +34,7 @@ export const SMASH_Y = 3.05;
 export const TIMING = { prep: 1.25, pointOver: 1.7, changeover: 2.6, matchOver: 4, serveRetry: 0.8 };
 
 // ---- stamina
-export const STAMINA = { drain: 0.16, jog: 0.006, rest: 0.010, between: 0.35 };
+export const STAMINA = { rush: 0.17, drain: 0.16, jog: 0.006, rest: 0.010, between: 0.35 };
 
 // ---- serve
 export const SERVE = {
@@ -55,3 +55,8 @@ export function xToAim(x) {
   const a = Math.min(1, Math.abs(x) / AIM_X), s = x < 0 ? -1 : 1;
   return s * (1 - Math.pow(1 - a, 1 / AIM_CURVE));
 }
+export const RUSH_ACC = 12.5;          // acceleration while sprinting to the net
+export const NET_PRESSURE = 2.2;     // extra scatter factor (x(1+this)) for passing shots against a fully set net player
+export const PRESSURE_REACT = 0.5;  // s of extra (or fewer) reaction time for a ball with pressure 1 (0 = average ball at 0.35)
+export const PRESSURE_Q = 0.45;         // quality loss for a reply to a maximum-pressure ball
+export const PRESSURE_NET = 2.2;       // multiplier of both pressure effects when the hitter is following the ball to the net

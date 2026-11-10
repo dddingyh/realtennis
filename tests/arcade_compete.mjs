@@ -13,7 +13,7 @@ const DT = 1 / 60;
 
 /** Human-like bot controlling player `i` through the public API only (plus the planned contact geometry a human sees). */
 export class Bot {
-  /** kind: 'tactical' | 'random' | 'netAlways' */
+  /** kind: 'tactical' (baseline, stays back) | 'selective' (rushes the net only behind good opportunities) | 'random' | 'netAlways' */
   constructor(sim, i, kind, seed, o = {}) {
     this.sim = sim; this.i = i; this.kind = kind; this.rng = new RNG(seed);
     this.reaction = o.reaction ?? 0.25; this.sigma = o.sigma ?? 0.045;
@@ -49,9 +49,13 @@ export class Bot {
         const u = rng.next();
         if (u < 0.15) shot = 'slice'; else if (u < 0.28) shot = 'flat';
       }
-      const short = plan && Math.abs(plan.P.z) < 9.6 && plan.P.y > 0.5 && !oppAtNet;
-      if ((this.kind === 'tactical') && !process.env.NONET && short && me.zone === 'base' && rng.chance(0.45)) { sim.setNet(i, true); shot = 'flat'; power = 0.78 + rng.gauss(0, 0.06); aimX = -Math.sign(oppX || 1) * 2.0; }
-      const intended = sim.timingForAim(i, aimX * (+process.env.AIMK || 1));                      // ms (sim time)
+      if (this.kind === 'selective' && me.zone === 'base' && plan && plan.margin > 0.25 && !oppAtNet) {
+        // approach only behind a good opportunity: a short ball from the opponent, or a shot that has pulled him wide
+        const short = Math.abs(plan.P.z) < 10.8 && plan.P.y > 0.45;
+        const pulled = Math.abs(oppX) > 1.8;
+        if ((short && Math.abs(oppX) > 1.0) || pulled) { sim.setNet(i, true); shot = 'topspin'; power = 0.86 + rng.gauss(0, 0.04); aimX = -Math.sign(oppX || (rng.chance(0.5) ? 1 : -1)) * (short ? 2.5 : 2.3); }
+      }
+      const intended = sim.timingForAim(i, aimX);                      // ms (sim time)
       const err = rng.gauss(0, this.sigma * 1000);
       this.sched = { at: this.real + hint.contactIn + (intended + err) / 1000 / TS, shot, power: Math.min(1, Math.max(0.05, power)) };
     }
@@ -71,11 +75,11 @@ export class Bot {
     if (this.hitAt === null) {
       const g = sim._serveGeom(sim.P[i]);
       const first = st.match.faultCount === 0;
-      const x = (this.kind === 'random' || process.env.RSERVE) ? g.cx + rng.range(-1.6, 1.6) : g.boxSign * rng.pick([0.8, 3.1, 2.0, 3.2]);
-      const off = (this.kind === 'random' || process.env.RSERVE) ? rng.range(-120, 120) : sim.serveTimingForAim(i, x);
+      const x = this.kind === 'random' ? g.cx + rng.range(-1.6, 1.6) : g.boxSign * rng.pick([0.8, 3.1, 2.0, 3.2]);
+      const off = this.kind === 'random' ? rng.range(-120, 120) : sim.serveTimingForAim(i, x);
       this.hitAt = this.real + hint.contactIn + (off + rng.gauss(0, this.sigma * 1000)) / 1000 / TS;
       this.power = first ? Math.min(1, 0.85 + rng.gauss(0, 0.06)) : 0.55;
-      if (this.kind === 'netAlways' || (this.kind === 'tactical' && rng.chance(0.08))) sim.setNet(i, true);
+      if (this.kind === 'netAlways') sim.setNet(i, true);
     }
     if (this.real >= this.hitAt) { sim.swing(i, { power: this.power, source: 'keyboard' }); this.hitAt = null; }
   }
@@ -124,6 +128,10 @@ if (process.argv[1] && process.argv[1].endsWith('arcade_compete.mjs')) {
     const R = compete({ kind: 'random', level: lv, n: N, seedBase: 20 + Math.round(lv * 10) });
     res['random' + lv] = R; line('random', lv, R);
   }
+  {
+    const R = compete({ kind: 'selective', level: 0.5, n: FAST ? 30 : 60, seedBase: 61 });
+    res.selective0_5 = R; line('selective', 0.5, R);
+  }
   for (const lv of [0.5, 0.65, 0.8]) {
     const R = compete({ kind: 'netAlways', level: lv, n: N, seedBase: 40 + Math.round(lv * 10) });
     res['netAlways' + lv] = R; line('netAlways', lv, R);
@@ -142,6 +150,12 @@ if (process.argv[1] && process.argv[1].endsWith('arcade_compete.mjs')) {
     const t = pct(res['tactical' + lv]), r = pct(res['netAlways' + lv]);
     const need = lv >= 0.8 ? 0 : 8;           // at 0.8 the AI already wins ~2/3 of the points, so the floor compresses differences
     check(`always rushing the net is punished (level ${lv}): >= ${need} points below the tactical bot`, t - r >= need, `${f1(t)}% vs ${f1(r)}%`);
+  }
+  {
+    const S = res.selective0_5, T = res['tactical0.5'], A = res['netAlways0.5'];
+    check('good-opportunity net rush wins >= 58% of its net points (level 0.5)', 100 * S.netWon / S.netPts >= 58, `${f1(100 * S.netWon / S.netPts)}% of ${S.netPts}`);
+    check('...and its overall points are at least those of the non-net tactical bot', pct(S) >= pct(T) - ci(T) * 0.5, `${f1(pct(S))}% vs ${f1(pct(T))}%`);
+    check('blind net rush (every ball) wins < 48% of its net points (level 0.5)', 100 * A.netWon / A.netPts < 48, `${f1(100 * A.netWon / A.netPts)}%`);
   }
   check('no stuck matches', Object.values(res).every((R) => R.stuck === 0));
   console.log(`\n(compete tests took ${((Date.now() - T0) / 1000).toFixed(1)} s)`);

@@ -121,7 +121,7 @@ export class AIBrain {
       if (oppNet) { shot = 'lob'; power = 0.42; aimX = -sgn(oppX) * 1.5; }
       else { shot = r.chance(0.45) ? 'slice' : 'topspin'; power = 0.36; aimX = -sgn(P.x) * r.range(0.8, 1.8); }
     } else if (oppNet) {
-      const lob = r.chance(0.3 + S.lobNet * 1.4) && Math.abs(opp.pos.z) < 5.5;
+      const lob = r.chance(opp.set > 0.6 ? 0.55 + S.lobNet : 0.25 + S.lobNet * 0.8) && Math.abs(opp.pos.z) < 5.5;
       if (lob) { shot = 'lob'; power = r.range(0.7, 0.9); aimX = (Math.abs(oppX) > 0.8 ? -sgn(oppX) : sgn(r.next() - 0.5)) * 1.8; }
       else { shot = r.chance(0.5) ? 'flat' : 'topspin'; power = clamp(0.62 + 0.12 * L + r.range(-0.05, 0.05), 0, 1); aimX = open(r.range(0.8, 1)); }
     } else if (shortBall && pressure < 0.5 && r.chance(S.attack)) {
