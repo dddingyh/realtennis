@@ -73,6 +73,7 @@ export class ArcadeSim {
       i, facing, hand, handX: (hand === 'R' ? 1 : -1) * facing, human: !!c.human, name: c.name || (c.human ? '你' : 'AI'), look: c.look,
       pos: { x: 0, z: facing * BASE_Z() }, vel: { x: 0, z: 0 }, y: 0, vy: 0,
       zone: 'base', wantNet: false, deep: false, stamina: 1, set: 1,
+      lagMs: c.lagMs !== undefined ? clamp(c.lagMs, 0, 200) : (c.remote ? 90 : 0), lagInit: c.lagMs !== undefined || !!c.remote,
       plan: null, recover: { x: 0, z: facing * BASE_Z() }, reactUntil: 0, splitUntil: 0,
       sw: null, cooldown: 0, walkTo: null, hold: null,
       reaction: K.HUMAN_REACTION, perceive: 0.25,
@@ -104,6 +105,13 @@ export class ArcadeSim {
   pause(v = true) { this.paused = !!v; }
   drainEvents() { const e = this.events; this.events = []; return e; }
   emit(e) { this.events.push(e); }
+  /** Set the estimated phone latency (ms) of player i (the swing ring then closes one lag early). Normally learned from ageMs. */
+  setLag(i, ms) { const p = this.P[i]; p.lagMs = clamp(ms, 0, 200); p.lagInit = true; }
+  _lagSim(p) { return p.lagMs / 1000 * this.timeScale; }
+  _noteLag(p, src, ageMs) {
+    if (src !== 'remote') return;
+    p.lagMs = clamp(0.8 * p.lagMs + 0.2 * clamp(ageMs, 0, 200), 0, 200);
+  }
   setNet(i, v) { this._setNet(this.P[i], !!v); }
   toggleNet(i) { this._setNet(this.P[i], !this.P[i].wantNet); }
 
@@ -169,6 +177,10 @@ export class ArcadeSim {
     const src = o.source || 'keyboard';
     const age = clamp((o.ageMs || 0) / 1000, 0, 0.6) * this.timeScale;
     const ts = this.time - age;
+    if (src === 'remote' && !p.lagInit) { p.lagInit = true; p.lagMs = 90; }      // first phone swing: assume a typical latency
+    const lagUsed = this._lagSim(p);                                              // judged with the estimate known BEFORE this swing
+    this._noteLag(p, src, o.ageMs || 0);
+    this._lagUsed = lagUsed;
     if (this.phase === 'serving') return this._serveSwing(p, o, ts, src);
     if (this.phase !== 'rally') return false;
     if (p.cooldown > 0 || (p.sw && !p.sw.done)) return false;
@@ -177,7 +189,7 @@ export class ArcadeSim {
     const req = (o.shot === 'topspin' || o.shot === 'flat' || o.shot === 'slice' || o.shot === 'lob') ? o.shot : 'topspin';
     const win = src === 'remote' ? K.REMOTE : { T_MISS: K.T_MISS, T_PERFECT: K.T_PERFECT };
     if (!plan || plan.swing || plan.expired) { this._airSwing(p, req, 'noball'); return true; }
-    const t = ts - plan.tContact;
+    const t = ts - (plan.tContact - lagUsed);       // ideal swing moment = natural contact - latency
     if (t < -win.T_MISS || t > win.T_MISS) { this._airSwing(p, req, t < 0 ? 'early' : 'late'); return true; }
     plan.swing = { ts, t, shot: req, power, src, win };
     const kind = this._kindFor(plan, req);
@@ -571,7 +583,7 @@ export class ArcadeSim {
       return true;
     }
     if (sv.stage !== 'flight' && sv.stage !== 'raise') return false;
-    if (sv.stage === 'raise' || ts < sv.tRel + 0.04) return false;
+    if (sv.stage === 'raise' || this.time < sv.tRel + 0.04) return false;
     return this._serveHit(p, o, ts, src);
   }
 
@@ -579,7 +591,7 @@ export class ArcadeSim {
     const sv = this.sv, m = this.match;
     const first = this.faultCount === 0;
     const win = src === 'remote' ? K.REMOTE : { T_MISS: K.T_MISS, T_PERFECT: K.T_PERFECT };
-    const t = ts - sv.tApex;
+    const t = ts - (sv.tApex - this._lagUsed);
     const power = clamp(o.power ?? 0.75, 0, 1);
     const g = this._serveGeom(p);
     const stats = this.stats;
@@ -852,9 +864,9 @@ export class ArcadeSim {
     const maxR = K.REACH[plan.side] + K.LUNGE * clamp(spd / 6, 0, 1);
     const reachY = kind === 'smash' ? K.SMASH_Y : K.REACH_Y;
     p.sw.done = false;
-    if (loc.lat > maxR + 0.12 || loc.lat < -0.45 || B.pos.y > reachY + 0.25 || loc.fwd < -3.4 || loc.fwd > 2.4) {
+    if (loc.lat > maxR + 0.12 || loc.lat < -0.45 || B.pos.y > reachY + 0.25 || loc.fwd < K.FWD_WHIFF || loc.fwd > 2.4) {
       p.sw.whiff = true; p.cooldown = 0.35;
-      this.emit({ type: 'whiff', by: p.i, reason: 'reach' });
+      this.emit({ type: 'whiff', by: p.i, reason: loc.fwd < K.FWD_WHIFF ? 'late' : 'reach' });
       p.plan = null;
       return;
     }
@@ -881,9 +893,9 @@ export class ArcadeSim {
     else if (at <= K.T_FULL) fT = lerp(1, 0.88, (at - win.T_PERFECT) / (K.T_FULL - win.T_PERFECT));
     else fT = 0.88 - 0.4 * clamp((at - K.T_FULL) / (K.T_MISS - K.T_FULL), 0, 1);
     const fGp = Math.max(0.15, 1 - K.PRESSURE_Q * Math.max(0, (p.incomingGp || 0) - 0.3) / 0.7);     // cramped by a deep / wide / fast incoming ball
-    const fLate = 1 - 0.12 * clamp((-loc.fwd - 0.5) / 2.5, 0, 1);   // contact far behind the ideal point (late swing)
+    const fLate = loc.fwd >= K.FWD_CLEAN ? 1 : 1 - 0.55 * clamp((K.FWD_CLEAN - loc.fwd) / (K.FWD_CLEAN - K.FWD_WHIFF), 0, 1);   // contact far behind the ideal point (late swing)
     let q = clamp(fGp * fLate * (0.1 + 0.9 * setv) * fPace * fH * fS * fT, 0, 1);
-    const mishit = label === 'wide' ? 'wide' : (reachT > 0.8 ? 'stretch' : null);
+    const mishit = label === 'wide' ? 'wide' : (loc.fwd < K.FWD_CLEAN ? 'frame' : (reachT > 0.8 ? 'stretch' : null));
     // ---- target
     const dirT = clamp(t / K.T_FULL, -1.7, 1.7);
     const sgnS = (plan.side === 'fh' ? 1 : -1) * p.handX;
@@ -1137,7 +1149,7 @@ export class ArcadeSim {
     sb.pos = b.pos; sb.vel = b.vel; sb.spin = b.spin;
     for (let i = 0; i < 2; i++) {
       const p = this.P[i], sp = s.players[i];
-      sp.y = p.y; sp.zone = p.zone; sp.stamina = p.stamina; sp.set = p.set;
+      sp.lagMs = p.lagMs; sp.y = p.y; sp.zone = p.zone; sp.stamina = p.stamina; sp.set = p.set;
       sp.racketTip = this._racketTip(p);
     }
     const sm = s.match;
@@ -1152,11 +1164,11 @@ export class ArcadeSim {
     H_.side = hp.plan ? hp.plan.side : (hp.anim.side || 'fh');
     if (this.phase === 'serving' && m.server === hi) {
       if (this.sv.stage === 'wait') { H_.canServe = true; H_.text = '挥拍抛球'; }
-      else if (this.sv.stage === 'raise') { H_.tossUp = true; H_.canServe = true; H_.contactIn = Math.max(0, (this.sv.tApex - this.time) / this.timeScale); H_.text = '球到最高点时挥拍'; }
-      else if (this.sv.stage === 'flight') { H_.tossUp = true; H_.canServe = true; H_.contactIn = Math.max(0, (this.sv.tApex - this.time) / this.timeScale); H_.text = '球到最高点时挥拍'; }
+      else if (this.sv.stage === 'raise') { H_.tossUp = true; H_.canServe = true; H_.contactIn = Math.max(0, (this.sv.tApex - this._lagSim(hp) - this.time) / this.timeScale); H_.text = '球到最高点时挥拍'; }
+      else if (this.sv.stage === 'flight') { H_.tossUp = true; H_.canServe = true; H_.contactIn = Math.max(0, (this.sv.tApex - this._lagSim(hp) - this.time) / this.timeScale); H_.text = '球到最高点时挥拍'; }
     } else if (this.phase === 'serve-prep' && m.server === hi) { H_.text = '准备发球'; }
     else if (this.phase === 'rally' && hp.plan && !hp.plan.swing && !hp.plan.expired && this.time <= hp.plan.tContact + 0.3) {
-      H_.contactIn = (hp.plan.tContact - this.time) / this.timeScale;
+      H_.contactIn = (hp.plan.tContact - this._lagSim(hp) - this.time) / this.timeScale;
       H_.text = hp.plan.kind === 'smash' ? '扣杀!' : hp.plan.kind === 'volley' ? '截击' : (hp.plan.side === 'fh' ? '正手' : '反手');
     }
   }

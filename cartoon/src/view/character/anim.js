@@ -327,7 +327,9 @@ export class Animator {
     const c = a.contact;
     const m = this.m;
     let cx = def.nom.lat, cz = def.nom.fwd, cy = def.nom.h;
-    if (c && c.h != null) { cx = -m * c.lat; cz = c.fwd; cy = c.h; }
+    // sim convention (docs/ARCADE.md): contact.lat > 0 = toward the stroke's hitting side (fh: racket-arm side, bh: the other
+    // side), already hand-relative; the rig works in racket-arm-side space, so only the stroke side flips the sign.
+    if (c && c.h != null) { cx = (a.side === 'bh' ? -1 : 1) * c.lat; cz = c.fwd; cy = c.h; }
     else { cx = def.nom.lat; }
     // nominal sweet spot (table at contact phase)
     evalTable(def.tbl, cp, this.P5);

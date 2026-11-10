@@ -93,7 +93,7 @@ async function startMatch(settings) {
   names = ['你', st ? '对手' : '对手'];
   const cfg = {
     surface: settings.surface, timeScale: settings.speed, seed: (Math.random() * 1e9) | 0, format: { ...fmt },
-    players: [{ human: true, hand: settings.hand, name: names[0], look: lk[0] }, { human: false, hand: 'R', name: names[1], look: lk[1], ai: { level: settings.level, style: settings.style } }],
+    players: [{ human: true, hand: settings.hand, name: names[0], look: lk[0], remote: settings.control === 'phone' }, { human: false, hand: 'R', name: names[1], look: lk[1], ai: { level: settings.level, style: settings.style } }],
   };
   if (detachKb) { try { detachKb(); } catch (e) { /* ignore */ } detachKb = null; kbHandle = null; }
   if (remote) { try { remote.destroy(); } catch (e) { /* ignore */ } remote = null; }

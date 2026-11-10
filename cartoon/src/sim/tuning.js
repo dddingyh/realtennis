@@ -24,7 +24,7 @@ export const NET_LATERAL = 0.65;     // lateral speed factor at the net (covers 
 
 // ---- contact geometry
 export const IDEAL_LAT = { fh: 0.85, bh: 0.72 };
-export const IDEAL_FWD = 0.50;
+export const IDEAL_FWD = 0.90;
 export const REACH = { fh: 1.32, bh: 1.18 };
 export const LUNGE = 0.30;
 export const REACH_Y = 2.35;
@@ -60,3 +60,7 @@ export const NET_PRESSURE = 2.2;     // extra scatter factor (x(1+this)) for pas
 export const PRESSURE_REACT = 0.2;  // s of extra (or fewer) reaction time for a ball with pressure 1 (0 = average ball at 0.35)
 export const PRESSURE_Q = 0.2;         // quality loss for a reply to a maximum-pressure ball
 export const PRESSURE_NET = 7.0;       // multiplier of both pressure effects when the hitter is following the ball to the net
+
+// ---- how far behind the hip line a ball can still be struck (fwd < 0 = behind the body)
+export const FWD_CLEAN = -0.5;     // cleanly struck down to here
+export const FWD_WHIFF = -1.5;     // between CLEAN and WHIFF = weak frame shot (mishit 'frame'); beyond = whiff reason 'late'
