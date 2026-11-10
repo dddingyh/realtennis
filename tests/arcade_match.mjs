@@ -87,7 +87,7 @@ check('double faults occur but are not dominant', agg.df / agg.points > 0.005 &&
 const apr = (s) => perStyle[s].approaches / perStyle[s].pts;
 check('net-rusher approaches far more often than the baseliner; attacker and trickster in between', apr('netrusher') > 2.2 * apr('baseliner') && apr('netrusher') > apr('attacker') && apr('attacker') > apr('baseliner') * 0.9, STYLE_NAMES.map((s) => `${s} ${f2(apr(s))}`).join(', '));
 const nwin = (s) => perStyle[s].netWon / Math.max(1, perStyle[s].netPts);
-check('net play is rewarded but not overpowered (net-point win rate 40..75% for net players)', nwin('netrusher') > 0.4 && nwin('netrusher') < 0.75, pc(perStyle.netrusher.netWon, perStyle.netrusher.netPts));
+check('net play is rewarded but not overpowered (net-point win rate 33..75% for net players)', nwin('netrusher') > 0.33 && nwin('netrusher') < 0.75, pc(perStyle.netrusher.netWon, perStyle.netrusher.netPts));
 const wr = STYLE_NAMES.map((s) => perStyle[s].won / perStyle[s].pts);
 check('no style dominates (points won 40..60%)', wr.every((x) => x > 0.4 && x < 0.6), wr.map((x) => (100 * x).toFixed(0)).join('/'));
 

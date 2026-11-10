@@ -156,7 +156,7 @@ const table = {};
 console.log('lob clears a net player');
 {
   const res = [];
-  for (const pw of [0.3, 0.5, 0.7]) for (let s = 0; s < 14; s++) {
+  for (const pw of [0.3, 0.5, 0.7, 0.8]) for (let s = 0; s < 14; s++) {
     const sim = mkSim({ seed: 300 + s });
     sim.debugFeed(1, { target: { x: -1.5 + (s % 5) * 0.8, z: HALF - 2.8 }, speedKmh: 92, y: 1.0 });
     sim.debugPlace(1, 0.5, -2.6, 'net');

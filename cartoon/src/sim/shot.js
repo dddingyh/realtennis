@@ -24,7 +24,7 @@ export const STROKES = {
 /** Soft slice / soft volley below this power is a drop shot. */
 export const DROP_POWER = 0.26;
 /** Lob elevation (rad) for power 0 (high, safe) .. 1 (low, offensive). */
-export const LOB_EL = [62 * Math.PI / 180, 42 * Math.PI / 180];
+export const LOB_EL = [60 * Math.PI / 180, 30 * Math.PI / 180];
 
 export function strokeParams(kind, power) {
   const s = STROKES[kind];

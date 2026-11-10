@@ -94,7 +94,7 @@ export class AIBrain {
     const S = this.S, r = this.rng, L = this.level;
     const opp = sim.P[1 - this.i];
     const P = pl.P;
-    const oppNet = opp.zone === 'net' || (opp.zone === 'toNet' && Math.abs(opp.pos.z) < 7.5);
+    const oppNet = opp.zone === 'net' || (opp.zone === 'toNet' && Math.abs(opp.pos.z) < 9.5);
     const oppDeep = Math.abs(opp.pos.z) > 12.5;
     const oppX = opp.pos.x;
     const marginP = clamp(1 - pl.margin / 0.3, 0, 1);
@@ -122,7 +122,7 @@ export class AIBrain {
       else { shot = r.chance(0.45) ? 'slice' : 'topspin'; power = 0.36; aimX = -sgn(P.x) * r.range(0.8, 1.8); }
     } else if (oppNet) {
       const lob = r.chance(0.3 + S.lobNet * 1.4) && Math.abs(opp.pos.z) < 5.5;
-      if (lob) { shot = 'lob'; power = r.range(0.35, 0.65); aimX = (Math.abs(oppX) > 0.8 ? -sgn(oppX) : sgn(r.next() - 0.5)) * 1.8; }
+      if (lob) { shot = 'lob'; power = r.range(0.7, 0.9); aimX = (Math.abs(oppX) > 0.8 ? -sgn(oppX) : sgn(r.next() - 0.5)) * 1.8; }
       else { shot = r.chance(0.5) ? 'flat' : 'topspin'; power = clamp(0.62 + 0.12 * L + r.range(-0.05, 0.05), 0, 1); aimX = open(r.range(0.8, 1)); }
     } else if (shortBall && pressure < 0.5 && r.chance(S.attack)) {
       shot = r.chance(0.55 + S.flat) ? 'flat' : 'topspin'; power = clamp(0.8 + 0.1 * L + r.range(-0.05, 0.05), 0, 1);
@@ -144,6 +144,7 @@ export class AIBrain {
       power = S.pow + 0.3 * (L - 0.5) + r.range(-0.08, 0.1);
       if (stretched && pressure < 0.42) power += 0.16;
       power += clamp((sim.rl.shots - 6) * 0.035, 0, 0.3);          // impatience: long rallies get hit harder
+      power += 0.22 * clamp((L - 0.7) / 0.3, 0, 1);
       power = clamp(power, 0.2, 1);
       const u = r.next();
       if (u < S.slice) { shot = 'slice'; power = clamp(power - 0.08, 0.2, 1); }
@@ -165,8 +166,8 @@ export class AIBrain {
 
 /** Level -> behaviour mapping (calibrated by tests/arcade_compete.mjs). */
 export const AI_TUNE = {
-  sigmaMin: 0.012, sigmaRange: 0.075, sigmaExp: 1.2,
-  tacticLo: 0.55, tacticHi: 0.97,
-  aimLo: 0.70, aimHi: 0.97,
-  reactLo: 0.24, reactHi: 0.12,
+  sigmaMin: 0.004, sigmaRange: 0.085, sigmaExp: 1.5,
+  tacticLo: 0.55, tacticHi: 1.0,
+  aimLo: 0.70, aimHi: 1.0,
+  reactLo: 0.24, reactHi: 0.08,
 };

@@ -837,7 +837,7 @@ export class ArcadeSim {
     const rd = Math.hypot(snap.pos.x - plan.standTrue.x, snap.pos.z - plan.standTrue.z);
     const reachT = clamp((loc.lat - 1.0) / Math.max(0.1, maxR - 1.0), 0, 1);
     const vf = (snap.vel.z * -p.facing);
-    const back = vf < -1.5 ? clamp((-vf - 1.5) / 3, 0, 1) * 0.18 : 0;
+    const back = vf < -1.5 ? clamp((-vf - 1.5) / 2.5, 0, 1) * 0.45 : 0;
     const setv = clamp(1 - 0.5 * clamp(spd / (K.VMAX * 0.9), 0, 1) - 0.35 * clamp(rd / 1.1, 0, 1) - 0.5 * reachT - back, 0, 1);
     const vIn = Math.hypot(B.vel.x, B.vel.y, B.vel.z);
     const fPace = clamp(1 - 0.014 * Math.max(0, vIn - 22), 0.55, 1);
@@ -852,6 +852,7 @@ export class ArcadeSim {
     else if (at <= K.T_FULL) fT = lerp(1, 0.88, (at - win.T_PERFECT) / (K.T_FULL - win.T_PERFECT));
     else fT = 0.88 - 0.4 * clamp((at - K.T_FULL) / (K.T_MISS - K.T_FULL), 0, 1);
     let q = clamp((0.1 + 0.9 * setv) * fPace * fH * fS * fT, 0, 1);
+    if (p.zone === 'toNet' && kind !== 'smash') q *= 0.86;           // hitting on the run in no-man's land
     const mishit = label === 'wide' ? 'wide' : (reachT > 0.8 ? 'stretch' : null);
     // ---- target
     const dirT = clamp(t / K.T_FULL, -1.7, 1.7);
@@ -894,7 +895,7 @@ export class ArcadeSim {
     // ---- scatter
     const edge = clamp(1 - Math.min(COURT.singlesHalfWidth - Math.abs(tx), isDrop ? 3 : Math.abs(tz) > 0 ? HALF - Math.abs(tz) : 3) / 2.2, 0, 1);
     const pw = 0.72 + 0.56 * power;
-    const kScale = kind === 'smash' ? 1.15 : kind === 'volley' ? 0.9 : kind === 'lob' ? 0.9 : 1;
+    const kScale = kind === 'smash' ? 1.15 : kind === 'volley' ? 1.8 : kind === 'lob' ? 0.9 : 1;
     const sd = (0.16 + 1.9 * Math.pow(1 - q, 1.3)) * pw * (1 + 0.45 * edge) * kScale + (label === 'wide' ? 0.9 * uW : 0);
     const sl = (0.2 + 2.2 * Math.pow(1 - q, 1.3)) * pw * (1 + 1.5 * edge) * kScale + (label === 'wide' ? 0.7 * uW : 0);
     const sCl = (0.06 + 0.6 * Math.pow(1 - q, 1.2)) * pw * kScale + (label === 'wide' ? 0.2 * uW : 0);

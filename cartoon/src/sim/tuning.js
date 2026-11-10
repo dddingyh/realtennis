@@ -20,7 +20,7 @@ export const NET_Z = 2.6;           // net position distance from the net
 export const NET_ARRIVE = 5.5;      // zone becomes 'net' when closer to the net than this
 export const BASE_Z = 12.65;        // |z| of the baseline home position
 export const BACK_Z = 13.7;         // defensive home depth
-export const NET_LATERAL = 0.8;     // lateral speed factor at the net (covers less width)
+export const NET_LATERAL = 0.65;     // lateral speed factor at the net (covers less width)
 
 // ---- contact geometry
 export const IDEAL_LAT = { fh: 0.85, bh: 0.72 };
