@@ -8,7 +8,7 @@ import { clamp, lerp } from './shot.js';
 export const STYLES = {
   baseliner: { pow: 0.62, approach: 0.10, drop: 0.015, lobNet: 0.22, attack: 0.5, slice: 0.14, flat: 0.12, aimMax: 0.95, serveVolley: 0, wideServe: 0.35, serveP: 0.82, dtl: 0.28 },
   attacker:  { pow: 0.76, approach: 0.55, drop: 0.02, lobNet: 0.12, attack: 0.9, slice: 0.06, flat: 0.34, aimMax: 1.0, serveVolley: 0.06, wideServe: 0.4, serveP: 0.95, dtl: 0.38 },
-  netrusher: { pow: 0.64, approach: 0.75, drop: 0.03, lobNet: 0.15, attack: 0.8, slice: 0.30, flat: 0.12, aimMax: 0.95, serveVolley: 0.55, wideServe: 0.45, serveP: 0.88, dtl: 0.30 },
+  netrusher: { pow: 0.64, approach: 0.6, drop: 0.03, lobNet: 0.15, attack: 0.8, slice: 0.30, flat: 0.12, aimMax: 0.95, serveVolley: 0.4, wideServe: 0.45, serveP: 0.88, dtl: 0.30 },
   trickster: { pow: 0.55, approach: 0.30, drop: 0.13, lobNet: 0.42, attack: 0.6, slice: 0.34, flat: 0.08, aimMax: 1.0, serveVolley: 0.04, wideServe: 0.5, serveP: 0.78, dtl: 0.34 },
 };
 export const STYLE_NAMES = Object.keys(STYLES);
@@ -144,7 +144,7 @@ export class AIBrain {
       power = S.pow + 0.3 * (L - 0.5) + r.range(-0.08, 0.1);
       if (stretched && pressure < 0.42) power += 0.16;
       power += clamp((sim.rl.shots - 6) * 0.035, 0, 0.3);          // impatience: long rallies get hit harder
-      power += 0.22 * clamp((L - 0.7) / 0.3, 0, 1);
+      power += 0.32 * clamp((L - 0.8) / 0.2, 0, 1);
       power = clamp(power, 0.2, 1);
       const u = r.next();
       if (u < S.slice) { shot = 'slice'; power = clamp(power - 0.08, 0.2, 1); }
@@ -166,7 +166,7 @@ export class AIBrain {
 
 /** Level -> behaviour mapping (calibrated by tests/arcade_compete.mjs). */
 export const AI_TUNE = {
-  sigmaMin: 0.004, sigmaRange: 0.085, sigmaExp: 1.5,
+  sigmaMin: 0.002, sigmaRange: 0.085, sigmaExp: 1.2,
   tacticLo: 0.55, tacticHi: 1.0,
   aimLo: 0.70, aimHi: 1.0,
   reactLo: 0.24, reactHi: 0.08,

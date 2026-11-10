@@ -30,6 +30,8 @@ const agg = { points: 0, rally: 0, winners: 0, forced: 0, unforced: 0, aces: 0, 
 const perStyle = {};
 for (const s of STYLE_NAMES) perStyle[s] = { pts: 0, won: 0, approaches: 0, netPts: 0, netWon: 0, winners: 0, unforced: 0, rally: 0, aces: 0 };
 const perLevel = {};
+const vsOthers = {};
+for (const s of STYLE_NAMES) vsOthers[s] = { pts: 0, won: 0, netPts: 0, netWon: 0 };
 const dist = [];
 let seed = 1;
 const problems = [];
@@ -52,6 +54,7 @@ for (const lv of LEVELS) {
     }
     for (const x of S.rallies) dist.push(x);
     [a, b].forEach((st, i) => {
+      if (a !== b) { const V = vsOthers[st]; V.pts += S.points[0] + S.points[1]; V.won += S.points[i]; V.netPts += S.netPoints[i]; V.netWon += S.netPointsWon[i]; }
       const P = perStyle[st];
       P.pts += S.points[0] + S.points[1]; P.won += S.points[i];
       P.approaches += S.netApproaches[i]; P.netPts += S.netPoints[i]; P.netWon += S.netPointsWon[i];
@@ -79,6 +82,7 @@ for (const s of STYLE_NAMES) {
   console.log(`  ${s.padEnd(10)} ${pc(P.won, P.pts)}    ${f2(P.approaches / P.pts).padStart(8)}   ${f2(P.netPts / P.pts).padStart(8)}   ${pc(P.netWon, Math.max(1, P.netPts))}      ${f2(P.winners / P.pts).padStart(6)}   ${f2(P.unforced / P.pts).padStart(8)}   ${f2(P.aces / P.pts).padStart(6)}`);
 }
 
+console.log('\nstyle vs the other styles: ' + STYLE_NAMES.map((s) => `${s} ${(100 * vsOthers[s].won / vsOthers[s].pts).toFixed(1)}% (net pts won ${(100 * vsOthers[s].netWon / Math.max(1, vsOthers[s].netPts)).toFixed(0)}% of ${vsOthers[s].netPts})`).join(', '));
 const avgRally = agg.rally / agg.points;
 check('average rally length is 5..9 shots', avgRally >= 5 && avgRally <= 9, f2(avgRally));
 check('winners, forced and unforced errors are all substantial', agg.winners / agg.points > 0.12 && agg.forced / agg.points > 0.04 && agg.unforced / agg.points > 0.1, `${pc(agg.winners, agg.points)} / ${pc(agg.forced, agg.points)} / ${pc(agg.unforced, agg.points)}`);
@@ -88,6 +92,8 @@ const apr = (s) => perStyle[s].approaches / perStyle[s].pts;
 check('net-rusher approaches far more often than the baseliner; attacker and trickster in between', apr('netrusher') > 2.2 * apr('baseliner') && apr('netrusher') > apr('attacker') && apr('attacker') > apr('baseliner') * 0.9, STYLE_NAMES.map((s) => `${s} ${f2(apr(s))}`).join(', '));
 const nwin = (s) => perStyle[s].netWon / Math.max(1, perStyle[s].netPts);
 check('net play is rewarded but not overpowered (net-point win rate 33..75% for net players)', nwin('netrusher') > 0.33 && nwin('netrusher') < 0.75, pc(perStyle.netrusher.netWon, perStyle.netrusher.netPts));
+const nr = vsOthers.netrusher;
+check('the netrusher style is viable vs the other styles (46..54% of points) and wins >= 52% of its net points', nr.won / nr.pts > 0.46 && nr.won / nr.pts < 0.54 && nr.netWon / nr.netPts >= 0.52, `${(100 * nr.won / nr.pts).toFixed(1)}% points, ${(100 * nr.netWon / nr.netPts).toFixed(0)}% net points`);
 const wr = STYLE_NAMES.map((s) => perStyle[s].won / perStyle[s].pts);
 check('no style dominates (points won 40..60%)', wr.every((x) => x > 0.4 && x < 0.6), wr.map((x) => (100 * x).toFixed(0)).join('/'));
 

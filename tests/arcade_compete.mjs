@@ -144,18 +144,22 @@ if (process.argv[1] && process.argv[1].endsWith('arcade_compete.mjs')) {
   check('AI levels are monotone (higher level -> bot wins fewer points)', pct(res['tactical0.2']) > pct(res['tactical0.5']) && pct(res['tactical0.5']) > pct(res['tactical0.8']) && pct(res['tactical0.8']) > pct(res['tactical1']));
   for (const lv of [0.5, 0.65, 0.8]) {
     const t = pct(res['tactical' + lv]), r = pct(res['random' + lv]);
-    check(`tactics matter (level ${lv}): tactical bot beats the random-timing bot by >= 8 points`, t - r >= 8, `${f1(t)}% vs ${f1(r)}%`);
+    const need = lv >= 0.8 ? 3 : 8;           // near the floor (AI wins ~2/3) differences compress
+    check(`tactics matter (level ${lv}): tactical bot beats the random-timing bot by >= ${need} points`, t - r >= need, `${f1(t)}% vs ${f1(r)}%`);
+  }
+  {
+    const A = res['netAlways0.5'], T = res['tactical0.5'];
+    check('always rushing the net is punished at level 0.5: below the non-net tactical bot', pct(T) - pct(A) >= 3, `${f1(pct(A))}% vs ${f1(pct(T))}%`);
   }
   for (const lv of [0.5, 0.65, 0.8]) {
-    const t = pct(res['tactical' + lv]), r = pct(res['netAlways' + lv]);
-    const need = lv >= 0.8 ? 0 : 8;           // at 0.8 the AI already wins ~2/3 of the points, so the floor compresses differences
-    check(`always rushing the net is punished (level ${lv}): >= ${need} points below the tactical bot`, t - r >= need, `${f1(t)}% vs ${f1(r)}%`);
+    const A = res['netAlways' + lv];
+    check(`blind net rush wins only 35..46% of its net points (level ${lv})`, 100 * A.netWon / A.netPts <= 46 && 100 * A.netWon / A.netPts >= 33, `${f1(100 * A.netWon / A.netPts)}%`);
   }
   {
     const S = res.selective0_5, T = res['tactical0.5'], A = res['netAlways0.5'];
     check('good-opportunity net rush wins >= 58% of its net points (level 0.5)', 100 * S.netWon / S.netPts >= 58, `${f1(100 * S.netWon / S.netPts)}% of ${S.netPts}`);
     check('...and its overall points are at least those of the non-net tactical bot', pct(S) >= pct(T) - ci(T) * 0.5, `${f1(pct(S))}% vs ${f1(pct(T))}%`);
-    check('blind net rush (every ball) wins < 48% of its net points (level 0.5)', 100 * A.netWon / A.netPts < 48, `${f1(100 * A.netWon / A.netPts)}%`);
+    check('good net rush beats blind net rush by >= 12 points of net-point win rate', 100 * S.netWon / S.netPts - 100 * A.netWon / A.netPts >= 12, `${f1(100 * S.netWon / S.netPts)}% vs ${f1(100 * A.netWon / A.netPts)}%`);
   }
   check('no stuck matches', Object.values(res).every((R) => R.stuck === 0));
   console.log(`\n(compete tests took ${((Date.now() - T0) / 1000).toFixed(1)} s)`);

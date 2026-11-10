@@ -135,7 +135,7 @@ const table = {};
     const inn = rows.filter((x) => x.f.landing && x.f.landing.in && !x.f.netHit).length;
     table[name] = {
       n: rows.length, kmh: mean(rows.map((x) => x.hit.speedKmh)), rpm: mean(rows.map((x) => x.hit.spinRpm)),
-      netClear: mean(rows.filter((x) => x.f.netClear != null).map((x) => x.f.netClear)), depth: mean(rows.map((x) => x.depth)),
+      netClear: mean(rows.filter((x) => x.f.netClear != null).map((x) => x.f.netClear)), depth: mean(rows.map((x) => x.depth).filter(Number.isFinite)),
       apex: mean(rows.filter((x) => x.f.apexAfter != null).map((x) => x.f.apexAfter)), inPct: 100 * inn / rows.length,
       hAfter: mean(rows.filter((x) => x.f.hAfter != null).map((x) => x.f.hAfter)), netPeak: mean(rows.filter((x) => x.f.netY != null).map((x) => x.f.netY)),
     };

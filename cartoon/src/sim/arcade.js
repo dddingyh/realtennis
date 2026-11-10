@@ -776,6 +776,13 @@ export class ArcadeSim {
         if (dd < 0.09 && e.margin >= -K.SETUP_TIME - 0.03 && dd < bestd) { bestd = dd; chosen = { c, e }; }
       }
     }
+    if (!chosen) {
+      for (const c of cands) {                       // overhead balls are smashed as soon as they are reachable
+        if (c.kind !== 'smash') continue;
+        const e = evalCand(c);
+        if (e.margin >= 0.1) { chosen = { c, e }; break; }
+      }
+    }
     if (!chosen && netMode) {
       // a net player takes the ball out of the air at a good volley position (~4.4 m from the net), set and balanced
       let bd = 1e9;
@@ -861,7 +868,6 @@ export class ArcadeSim {
     const vf = (snap.vel.z * -p.facing);
     const back = vf < -1.5 ? clamp((-vf - 1.5) / 2.5, 0, 1) * 0.6 : 0;
     const setv = clamp(1 - 0.5 * clamp(spdEff / (K.VMAX * 0.9), 0, 1) - 0.35 * clamp(rd / 1.1, 0, 1) - 0.5 * reachT - back, 0, 1);
-    if (process.env.DBGV && kind === 'volley' && p.human) console.log('V spd', spd.toFixed(1), 'rd', rd.toFixed(2), 'reachT', reachT.toFixed(2), 'back', back.toFixed(2), 'set', setv.toFixed(2), 'z', snap.pos.z.toFixed(1), 'margin', plan.margin.toFixed(2));
     const vIn = Math.hypot(B.vel.x, B.vel.y, B.vel.z);
     const fPace = clamp(1 - 0.014 * Math.max(0, vIn - 22), 0.55, 1);
     const y = B.pos.y;

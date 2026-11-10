@@ -57,6 +57,6 @@ export function xToAim(x) {
 }
 export const RUSH_ACC = 12.5;          // acceleration while sprinting to the net
 export const NET_PRESSURE = 2.2;     // extra scatter factor (x(1+this)) for passing shots against a fully set net player
-export const PRESSURE_REACT = 0.5;  // s of extra (or fewer) reaction time for a ball with pressure 1 (0 = average ball at 0.35)
-export const PRESSURE_Q = 0.45;         // quality loss for a reply to a maximum-pressure ball
-export const PRESSURE_NET = 2.2;       // multiplier of both pressure effects when the hitter is following the ball to the net
+export const PRESSURE_REACT = 0.2;  // s of extra (or fewer) reaction time for a ball with pressure 1 (0 = average ball at 0.35)
+export const PRESSURE_Q = 0.2;         // quality loss for a reply to a maximum-pressure ball
+export const PRESSURE_NET = 7.0;       // multiplier of both pressure effects when the hitter is following the ball to the net
