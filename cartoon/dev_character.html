@@ -19,7 +19,7 @@
 <div id="ui"></div>
 <script type="module">
 import * as THREE from 'three';
-import { createCharacter, DEFAULT_LOOKS, getHandWorldPosition } from './src/view/character/index.js';
+import { createCharacter, DEFAULT_LOOKS, getHandWorldPosition, STYLES, HAIR_STYLES } from './src/view/character/index.js';
 
 const Q = new URLSearchParams(location.search);
 const canvas = document.getElementById('c');
@@ -52,6 +52,7 @@ const S = {
   hand: Q.get('hand') || 'R', look: +(Q.get('look') ?? 0), view: Q.get('view') || 'back',
   play: Q.get('play') === '1', emote: Q.get('emote') || '', contact: Q.get('contact') !== '0', speed: +(Q.get('speed') ?? 0.7),
   y: +(Q.get('y') ?? 0), zoom: +(Q.get('zoom') ?? 1),
+  style: Q.get('style') || 'chibi', hairStyle: Q.get('hairStyle') || '', headwear: Q.get('headwear') || '', expr: Q.get('expr') || '',
 };
 const FACES = { back: [0, -1], front: [0, 1], side: [1, 0], side2: [-1, 0], three: [0.7, 0.7], threeb: [0.7, -0.7] };
 const NOMC = { topspin: [0.68, 0.45, 0.92], flat: [0.68, 0.45, 0.92], slice: [0.66, 0.46, 0.95], lob: [0.66, 0.4, 0.7], volley: [0.55, 0.5, 1.1], smash: [0.25, 0.4, 2.55], serve: [0.3, 0.62, 2.65] };
@@ -67,8 +68,13 @@ function contactFor(shot, side, reach, hand) {
 // character slots
 const chars = [];
 function clearChars() { for (const c of chars) { c.ch.dispose(); scene.remove(c.ch.object3d); } chars.length = 0; }
-function addChar(lookIdx, x, z, hand, view) {
-  const ch = createCharacter(DEFAULT_LOOKS[lookIdx % DEFAULT_LOOKS.length], {});
+function addChar(lookIdx, x, z, hand, view, o2) {
+  const lk = Object.assign({}, DEFAULT_LOOKS[lookIdx % DEFAULT_LOOKS.length], { style: (o2 && o2.style) || S.style });
+  if (o2 && o2.hairStyle) lk.hairStyle = o2.hairStyle; else if (!o2 && S.hairStyle) lk.hairStyle = S.hairStyle;
+  if (o2 && o2.headwear) lk.headwear = o2.headwear; else if (!o2 && S.headwear) lk.headwear = S.headwear === 'none' ? 'none' : S.headwear;
+  if (o2 && o2.look) Object.assign(lk, o2.look);
+  const ch = createCharacter(lk, {});
+  if (o2 && o2.expr) ch._an.forceExpr = o2.expr; else if (!o2 && S.expr) ch._an.forceExpr = S.expr;
   scene.add(ch.object3d);
   const f = FACES[view] || FACES.back;
   const ps = { pos: { x, z }, y: 0, hand, zone: 'base', set: 1, stamina: 1, anim: { name: 'ready', face: { x: f[0], z: f[1] } } };
@@ -140,7 +146,7 @@ function sheet(opts) {
   const out = [];
   for (let i = 0; i < n; i++) {
     const o = Object.assign({}, S, opts.base || {}, opts.mk(i));
-    const c = addChar(o.look ?? S.look, (i - (n - 1) / 2) * sp, 0, o.hand, o.view || S.view);
+    const c = addChar(o.look ?? S.look, (i - (n - 1) / 2) * sp, 0, o.hand, o.view || S.view, o);
     c.o = o; out.push(c);
   }
   frameCamera((n * sp + 0.6) / (opts.zoom || 1), 0, opts.camY ?? 1.15, 'back');
@@ -191,7 +197,7 @@ function simSheet(cfgs, opts = {}) {
   const n = cfgs.length, sp = opts.spacing || 1.3, dt = 1 / 60;
   const out = [];
   cfgs.forEach((cf, i) => {
-    const c = addChar(cf.look ?? 0, (i - (n - 1) / 2) * sp, 0, cf.hand || 'R', 'back');
+    const c = addChar(cf.look ?? 0, (i - (n - 1) / 2) * sp, 0, cf.hand || 'R', 'back', cf);
     const face = cf.face || [0, -1]; c.f = face;
     const ps = c.ps; const a = ps.anim;
     a.name = cf.anim; a.face = { x: face[0], z: face[1] }; a.emote = cf.emote || null;
@@ -245,6 +251,8 @@ ui.innerHTML = [
   opt('view', ['back', 'front', 'side', 'side2', 'three', 'threeb'], 'view'),
   opt('look', DEFAULT_LOOKS.map((_, i) => i), 'look'),
   opt('emote', ['', 'happy', 'frustrated', 'focused'], 'emote'),
+  opt('style', STYLES, 'style'), opt('hair', ['', ...HAIR_STYLES], 'hairStyle'), opt('headwear', ['', 'none', 'visor', 'headband', 'cap'], 'headwear'),
+  opt('expr', ['', 'neutral', 'focus', 'effort', 'shout', 'happy', 'cheer', 'frustrated', 'sad', 'surprised', 'run', 'pant'], 'expr'),
   '<label>phase <input id="phase" type="range" min="0" max="1" step="0.01" value="' + S.phase + '" data-k="phase"></label>',
   '<label>gait <input type="range" min="0" max="1" step="0.01" value="' + S.gait + '" data-k="gait"></label>',
   '<label>reach <input type="range" min="0" max="1" step="0.01" value="' + S.reach + '" data-k="reach"></label>',
@@ -255,7 +263,7 @@ ui.innerHTML = [
 ui.addEventListener('input', (e) => {
   const k = e.target.dataset.k; if (!k) return;
   S[k] = e.target.type === 'range' ? +e.target.value : e.target.value;
-  if (['look', 'hand', 'view'].includes(k)) { if (k === 'look') S.look = +S.look; cur = single(); }
+  if (['look', 'hand', 'view', 'style', 'hairStyle', 'headwear', 'expr'].includes(k)) { if (k === 'look') S.look = +S.look; cur = single(); }
   if (!S.play) { const c = chars[0]; if (c) settle(c, S, 3); }
 });
 document.getElementById('play').onchange = (e) => { S.play = e.target.checked; };
