@@ -18,7 +18,7 @@ export const FORMATS = [
 ];
 export const DEFAULTS = {
   style: 'baseliner', level: 0.5, surface: 'hard', format: 'set', speed: 0.8, control: 'keyboard', hand: 'R', offset: 0,
-  look0: 0, look1: 1, sound: true, timing: true, landing: true, speech: false,
+  look0: 0, look1: 1, charstyle: 'chibi', sound: true, timing: true, landing: true, speech: false,
 };
 const KEY = 'cartoon-tennis-settings-v1';
 
@@ -113,6 +113,11 @@ export function createMenu(root, opts) {
   const sHand = section(row2, '惯用手'); seg(sHand, [{ id: 'R', name: '右手' }, { id: 'L', name: '左手' }], 'hand');
   const sOff = section(row2, '时序偏移', 'hvOff'); slider(sOff, 'offset', -150, 150, 5, (v) => `${v > 0 ? '+' : ''}${v} ms`);
   sOff.title = '手机延迟补偿：打球总偏晚就往负方向调';
+  const sCS = section(Rr, '人物风格');
+  const csw = seg(sCS, [{ id: 'chibi', name: 'Q 版' }, { id: 'anime', name: '少年漫画' }], 'charstyle');
+  const applyCS = () => looks.forEach((l) => { l.style = S.charstyle === 'anime' ? 'anime' : 'chibi'; });
+  applyCS();
+  csw.querySelectorAll('.segb').forEach((b) => b.addEventListener('click', () => { applyCS(); opts.onChange(S, 'look0'); }));
   const lookRow = (title, key) => {
     const s = section(Rr, title); const w = el('div', 'looks'); s.appendChild(w);
     const build = () => { w.innerHTML = ''; looks.forEach((lk, i) => { const c = lookChip(lk, S[key] === i); c.addEventListener('click', () => { S[key] = i; opts.onChange(S, key); build(); }); w.appendChild(c); }); };

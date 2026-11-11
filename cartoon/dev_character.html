@@ -60,9 +60,8 @@ const NOMB = { topspin: [-0.55, 0.38, 0.95], flat: [-0.55, 0.38, 0.95], slice: [
 
 function contactFor(shot, side, reach, hand) {
   const nom = (side === 'bh' && NOMB[shot]) ? NOMB[shot] : NOMC[shot] || NOMC.topspin;
-  const sgn = Math.sign(nom[0]) || 1;
-  const hs = hand === 'L' ? -1 : 1; // lat is relative to the player's RIGHT; lefties' dominant side is -lat
-  return { lat: hs * (nom[0] + sgn * 0.55 * reach), fwd: nom[1] + 0.3 * reach, h: nom[2] - (shot === 'smash' || shot === 'serve' ? 0 : 0.25 * reach) };
+  // sim convention: lat > 0 = toward the stroke's hitting side (fh: racket-arm side, bh: the other side), hand-relative
+  return { lat: (Math.abs(nom[0]) + 0.55 * reach), fwd: nom[1] + 0.3 * reach, h: nom[2] - (shot === 'smash' || shot === 'serve' ? 0 : 0.25 * reach) };
 }
 
 // character slots
@@ -105,8 +104,8 @@ function setBallFor(c, o) {
   // put the ball at the contact point (world) for head tracking
   const f = c.f; const rx = -f[1], rz = f[0];
   const ct = c.ps.anim.contact || { lat: 0, fwd: 7, h: 1.4 };
-  const m = c.ps.hand === 'L' ? -1 : 1; // lat is relative to the player's right
-  return { x: c.ps.pos.x + rx * ct.lat + f[0] * ct.fwd, y: ct.h, z: c.ps.pos.z + rz * ct.lat + f[1] * ct.fwd };
+  const m = (c.ps.hand === 'L' ? -1 : 1) * (c.ps.anim.side === 'bh' ? -1 : 1);
+  return { x: c.ps.pos.x + rx * ct.lat * m + f[0] * ct.fwd, y: ct.h, z: c.ps.pos.z + rz * ct.lat * m + f[1] * ct.fwd };
 }
 
 function settle(c, o, frames = 40) {
@@ -277,7 +276,8 @@ const wv = new THREE.Vector3(), wv2 = new THREE.Vector3();
 function contactWorld(c) {
   const ct = c.ps.anim.contact; if (!ct) return null;
   const f = c.f; const rx = -f[1], rz = f[0];
-  return wv2.set(c.ps.pos.x + rx * ct.lat + f[0] * ct.fwd, ct.h, c.ps.pos.z + rz * ct.lat + f[1] * ct.fwd);
+  const mm = (c.ps.hand === 'L' ? -1 : 1) * (c.ps.anim.side === 'bh' ? -1 : 1);
+  return wv2.set(c.ps.pos.x + rx * ct.lat * mm + f[0] * ct.fwd, ct.h, c.ps.pos.z + rz * ct.lat * mm + f[1] * ct.fwd);
 }
 window.__dev = {
   THREE, scene, camera, renderer, chars, S, DEFAULT_LOOKS, getHandWorldPosition, ctx,
@@ -304,7 +304,7 @@ window.__dev = {
 function single2(o) {
   clearChars();
   const base = Object.assign({}, S, o);
-  const c = addChar(base.look, 0, 0, base.hand, base.view);
+  const c = addChar(base.look, 0, 0, base.hand, base.view, { style: base.style });
   c.o = base;
   frameCamera(2.6, 0, 1.1, 'back');
   return c;

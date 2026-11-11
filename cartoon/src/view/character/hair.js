@@ -42,7 +42,7 @@ export function buildHair(M, D, look, H) {
   };
   const capTab = style === 'bob' ? capBottom.bob : style === 'long' ? capBottom.long : capBottom.short;
   if (capOn || true) {
-    const C = 28, R = 15;
+    const C = 28, R = 11;
     const pos = [];
     const tv = [];
     for (let r = 0; r < R; r++) {
@@ -64,7 +64,7 @@ export function buildHair(M, D, look, H) {
 
   // ------------------------------------------------------------ lock helpers
   const lockBase = {
-    rings: 6, segs: 5, slot: HAIR, hint: hintHead, hl: [0.08, 0.5], wt: head,
+    rings: 5, segs: 4, slot: HAIR, hint: hintHead, hl: [0.08, 0.5], wt: head,
     ao: (t, a) => (Math.sin(a) < -0.3 ? 1 : 0),
   };
   const lock = (pts, w0, o = {}) => sweep(M, Object.assign({}, lockBase, {
@@ -83,7 +83,7 @@ export function buildHair(M, D, look, H) {
       const tm = lerp(root, tTip, 0.5);
       const thm = lerp(thR * 0.6, thTip, 0.55) + swoop * 0.2;
       const pts = surfPts([[root, thR * 0.55, 0.012], [tm, thm, 0.034 * wm], [tTip, thTip + swoop * 0.35, 0.018 + 0.006 * (wm > 1 ? 1 : 0)]]);
-      lock(pts, 0.2 * u * wm * wmul, { rings: 6, wt: (t) => (t < 0.5 ? head : [head, 1 - sst(0.5, 1, t) * 0.55, BI.fringe, sst(0.5, 1, t) * 0.55]) });
+      lock(pts, 0.2 * u * wm * wmul, { rings: 5, wt: (t) => (t < 0.5 ? head : [head, 1 - sst(0.5, 1, t) * 0.55, BI.fringe, sst(0.5, 1, t) * 0.55]) });
       void tipMul;
     }
   };
@@ -163,7 +163,7 @@ export function buildHair(M, D, look, H) {
         const bottom = H.y(0) - L * dep + 0.02;
         const pts = [[x0.x, x0.y, x0.z], [x0.x * 1.05, lerp(x0.y, bottom, 0.3), x0.z * 1.08 - 0.01], [x0.x * 1.0, lerp(x0.y, bottom, 0.65), x0.z * 1.06 - 0.02], [x0.x * 0.9, bottom, x0.z * 1.0 - 0.01]];
         const total = x0.y - bottom;
-        lock(pts, 0.28 * u * rr, { rings: 8, prof: prof.tail, slot: (i % 2) ? HAIR : HAIR2, hl: [0.1, 0.5], wt: (t) => W3(clamp(((x0.y - lerp(x0.y, bottom, t)) - 0.0) / Math.max(total, 1e-3), 0, 1) * 0.0 + t * 1) });
+        lock(pts, 0.28 * u * rr, { rings: 7, segs: 4, prof: prof.tail, slot: (i % 2) ? HAIR : HAIR2, hl: [0.1, 0.5], wt: (t) => W3(clamp(((x0.y - lerp(x0.y, bottom, t)) - 0.0) / Math.max(total, 1e-3), 0, 1) * 0.0 + t * 1) });
       });
       break;
     }
@@ -243,7 +243,7 @@ function tail(M, D, H, o) {
       ? [[ax + s * 0.005, ay, az], [ax + s * (0.045 + 0.01 * f) + sx * 0.6, ay - 0.02, az - 0.03], [ax + s * (0.07 + o.curl) + sx, ay - ln * 0.4, az - 0.035 + 0.01 * f], [ax + s * (0.075 + o.curl * 1.6) + sx * 1.3, ay - ln * 0.75, az - 0.02], [ax + s * (0.06 + o.curl * 2.6) + sx * 1.4, ay - ln, az + 0.0]]
       : [[ax, ay, az], [ax + sx * 0.4, ay + 0.03, az - 0.05], [ax + sx, ay - 0.03, az - 0.1 - o.swoop], [ax + sx * 1.3, ay - ln * 0.45, az - 0.12 - o.swoop * 1.2], [ax + sx * 1.4, ay - ln * 0.8, az - 0.1 - o.swoop], [ax + sx * 1.5, ay - ln, az - 0.07]];
     sweep(M, {
-      pts, rings: 9, segs: 6, slot: (k === 1) ? SLOT.hair2 : SLOT.hair,
+      pts, rings: 7, segs: 5, slot: (k === 1) ? SLOT.hair2 : SLOT.hair,
       w: (t) => o.w * prof.tail(t) * (1 - 0.1 * Math.abs(f)), th: (t) => o.w * 0.9 * prof.tail(t) * (1 - 0.1 * Math.abs(f)),
       hint: () => new V(0, 0, -1), wt: (t) => W3(t), hl: [0.08, 0.45], ao: (t, a) => (Math.sin(a) < -0.3 ? 1 : 0),
     });
@@ -302,9 +302,9 @@ function headwear(M, D, H, look, hw) {
     for (let i = 0; i <= 8; i++) {
       const th = lerp(-1.2, 1.2, i / 8);
       const p = H.surf(0.80, th, 0.014 + 0.05 * Math.cos(th * 0.8) * (W / 0.215) ** 0.6 + 0.0);
-      pts.push([p.x, p.y + 0.004, p.z]);
+      pts.push([p.x, p.y - 0.012 * Math.cos(th * 0.8), p.z]);
     }
-    sweep(M, { pts, rings: 12, segs: 6, slot: A, w: (t) => 0.034 * (W / 0.215) ** 0.6 + 0.012, th: () => 0.006, hint: () => new V(0, 1, 0), wt: head, hl: [0, 0], noHl: true, ow: 1 });
+    sweep(M, { pts, rings: 12, segs: 6, slot: A, w: (t) => 0.034 * (W / 0.215) ** 0.6 + 0.012, th: () => 0.011, hint: () => new V(0, 1, 0), wt: head, hl: [0, 0], noHl: true, ow: 1 });
   } else if (hw === 'cap') {
     // dome shell
     const C = 28, R = 12, pos = [], tv = [];

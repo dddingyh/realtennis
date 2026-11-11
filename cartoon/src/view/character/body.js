@@ -73,7 +73,7 @@ export function buildBody(look, D) {
     const splitAt = (f) => { const i = rings.findIndex((r) => Math.abs(r.y - fAt(f)) < 1e-6); return i; };
     void splitAt;
   }
-  tube(M, bandify(rings, blockOn ? [[fAt(0.6), fAt(0.8)]] : [], AC, tt, fAt), { N: 18, wt: wTorso });
+  tube(M, bandify(rings, blockOn ? [[fAt(0.6), fAt(0.8)]] : [], AC, tt, fAt), { N: 14, wt: wTorso });
 
   // trim ring at the shirt hem (white band)
   // collar (polo) ring around the neck base
@@ -103,7 +103,7 @@ export function buildBody(look, D) {
     const mk = (y, k) => {
       const v = (top - y) / (top - hem);
       const rx = lerp(rt[0] + 0.012, flare, Math.pow(v, 0.8)), rz = lerp(rt[1] + 0.012, flare * 0.92, Math.pow(v, 0.8));
-      return ring(y, rx, rz, SHO, { mod: [0.05 + 0.07 * v, 9, 0.2], ao: 0 });
+      return ring(y, rx, rz, SHO, { mod: [0.05 + 0.07 * v, 9 * 0 + 6, 0.2], ao: 0 });
     };
     const sr = [mk(top, 0), mk(lerp(top, hem, 0.35)), mk(lerp(top, hem, 0.7)), mk(hem + 0.03)];
     const hr = mk(hem + 0.03); // trim band split
@@ -117,7 +117,7 @@ export function buildBody(look, D) {
       const th = x > 0 ? BI.thighD : BI.thighN;
       return [P, 1 - 0.85 * v, BI.skirt, 0.5 * v, th, 0.35 * v * Math.min(1, Math.abs(x) / 0.06)];
     };
-    tube(M, sr, { N: 36, wt: wSk });
+    tube(M, sr, { N: 27, wt: wSk });
   }
 
   // ------------------------------------------------------------------ neck
@@ -164,16 +164,16 @@ export function buildBody(look, D) {
     rr.push(ring(yW + 0.03, D.wristR * 1.1, D.wristR * 1.08, SK));
     rr.push(ring(yW - 0.005, D.wristR * 1.0, D.wristR * 0.95, SK));
     rr.push(ring(yW - 0.012, 0, 0, SK));
-    tube(M, rr, { N: 10, wt: wArm, hlTop: true, cx });
+    tube(M, rr, { N: 8, wt: wArm, hlTop: true, cx });
     // fix cx: tube uses ring.cx, so shift via origin trick below
     // (cx handled by translating the last-added vertices)
-    shiftLast(M, rr.length * 10, cx);
+    shiftLast(M, rr.length * 8, cx);
     // fist + thumb + finger curl
     const hk = D.handK, hy = -D.palm;
     const hx = (x) => sg * x;
     const hp = R[hd];
     const place = (c) => [hp.x + hx(c[0]), hp.y + c[1], hp.z + c[2]];
-    ellipsoid(M, place([0, hy * 0.98, 0]), [0.047 * hk, 0.062 * hk, 0.058 * hk], { lat: 7, lon: 10, slot: SK, wt: hd });
+    ellipsoid(M, place([0, hy * 0.98, 0]), [0.047 * hk, 0.062 * hk, 0.058 * hk], { lat: 6, lon: 9, slot: SK, wt: hd });
     ellipsoid(M, place([-0.036 * hk * 1, hy * 0.62, 0.03 * hk]), [0.022 * hk, 0.03 * hk, 0.02 * hk], { lat: 5, lon: 8, slot: SK, wt: hd, rot: [0.3, 0, hx(-0.5)] }); // thumb
     for (let k = 0; k < 4; k++) ellipsoid(M, place([-0.03 * hk, hy * 1.18, (-0.039 + k * 0.026) * hk]), [0.021 * hk, 0.02 * hk, 0.0145 * hk], { lat: 4, lon: 7, slot: SK, wt: hd, ao: (nx, ny) => (ny < -0.2 ? 1 : 0) });
   }
@@ -219,8 +219,8 @@ export function buildBody(look, D) {
     const at = (x, y, z) => [fp.x + sg * x * 0 + x, fp.y + y, fp.z + z];
     const aH = D.ankleH;
     const SHOE = SLOT.shoes;
-    ellipsoid(M, at(0, -aH + 0.016, 0.07 * k), [0.066 * k, 0.017 * k + 0.005, 0.155 * k], { lat: 6, lon: 12, slot: SLOT.sole, wt: ft });
-    ellipsoid(M, at(0, -aH * 0.5 + 0.012, 0.055 * k), [0.058 * k, aH * 0.62 + 0.012, 0.125 * k], { lat: 7, lon: 12, slot: SHOE, wt: ft, ao: (nx, ny, nz) => (ny < -0.45 ? 1 : 0), hl: (nx, ny, nz) => (ny > 0.55 && nz > -0.1 ? 1 : 0) });
+    ellipsoid(M, at(0, -aH + 0.016, 0.07 * k), [0.066 * k, 0.017 * k + 0.005, 0.155 * k], { lat: 5, lon: 10, slot: SLOT.sole, wt: ft });
+    ellipsoid(M, at(0, -aH * 0.5 + 0.012, 0.055 * k), [0.058 * k, aH * 0.62 + 0.012, 0.125 * k], { lat: 6, lon: 10, slot: SHOE, wt: ft, ao: (nx, ny, nz) => (ny < -0.45 ? 1 : 0), hl: (nx, ny, nz) => (ny > 0.55 && nz > -0.1 ? 1 : 0) });
     ellipsoid(M, at(0, -aH * 0.62 + 0.01, 0.15 * k), [0.054 * k, aH * 0.5 + 0.01, 0.07 * k], { lat: 6, lon: 10, slot: SHOE, wt: ft });
     ellipsoid(M, at(0, aH * 0.02, 0.07 * k), [0.04 * k, 0.014 * k, 0.05 * k], { lat: 4, lon: 8, slot: AC, wt: ft }); // tongue / lace panel
     ellipsoid(M, at(0, -aH * 0.45, -0.045 * k), [0.04 * k, 0.04 * k, 0.014 * k], { lat: 4, lon: 8, slot: AC, wt: ft }); // heel tab
