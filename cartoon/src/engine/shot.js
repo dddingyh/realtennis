@@ -101,6 +101,7 @@ export function solveLaunch(spec) {
     v *= attempt < 5 ? 0.93 : 0.86;
     if (v < 6) break;
   }
+  if (!r) solveRange(true);                                    // (range never reachable: use the best effort)
   [hx, hz] = dirAt(az);
   if (fixedEl) {
     const r2 = fly(pos, v + 0.4, el, hx, hz, top, side, surface, tune);
@@ -116,7 +117,7 @@ export function solveLaunch(spec) {
   if (side !== 0 || tune) {
     const rp = fly(pos, v, el, hx, hz, top, side, surface, tune, SOLVE_DT, true);
     for (const q of rp.path) {
-      const d = -(q.x - pos.x) * hz + (q.z - pos.z) * hx;                   // lateral offset from the line along perp = (-hz, hx) (= +x for travel toward -z)
+      const d = (-(q.x - pos.x) * hz + (q.z - pos.z) * hx) * (hz <= 0 ? 1 : -1);   // lateral offset from the launch line, + = toward +x (world), for either court end
       if (Math.abs(d) > Math.abs(curveM)) curveM = d;
     }
   }

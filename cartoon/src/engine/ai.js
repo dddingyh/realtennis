@@ -5,10 +5,10 @@ import { clamp, lerp } from './shot.js';
 
 /** Style parameters. approach: chance to go to the net after a short ball; drop/lob: preferences; pow: base power. */
 export const STYLES = {
-  baseliner: { pow: 0.62, approach: 0.10, drop: 0.015, lobNet: 0.22, attack: 0.5, slice: 0.14, flat: 0.12, aimMax: 0.95, serveVolley: 0, wideServe: 0.35, serveP: 0.82, dtl: 0.28 },
-  attacker:  { pow: 0.76, approach: 0.55, drop: 0.02, lobNet: 0.12, attack: 0.9, slice: 0.06, flat: 0.34, aimMax: 1.0, serveVolley: 0.06, wideServe: 0.4, serveP: 0.95, dtl: 0.38 },
-  netrusher: { pow: 0.64, approach: 0.6, drop: 0.03, lobNet: 0.15, attack: 0.8, slice: 0.30, flat: 0.12, aimMax: 0.95, serveVolley: 0.4, wideServe: 0.45, serveP: 0.88, dtl: 0.30 },
-  trickster: { pow: 0.55, approach: 0.30, drop: 0.13, lobNet: 0.42, attack: 0.6, slice: 0.34, flat: 0.08, aimMax: 1.0, serveVolley: 0.04, wideServe: 0.5, serveP: 0.78, dtl: 0.34 },
+  baseliner: { fh: 1.25, aggr: 0.45, pow: 0.62, approach: 0.10, drop: 0.015, lobNet: 0.22, attack: 0.5, slice: 0.14, flat: 0.12, aimMax: 0.95, serveVolley: 0, wideServe: 0.35, serveP: 0.82, dtl: 0.28 },
+  attacker:  { fh: 1.4, aggr: 0.85, pow: 0.76, approach: 0.55, drop: 0.02, lobNet: 0.12, attack: 0.9, slice: 0.06, flat: 0.34, aimMax: 1.0, serveVolley: 0.06, wideServe: 0.4, serveP: 0.95, dtl: 0.38 },
+  netrusher: { fh: 0.7, aggr: 0.8, pow: 0.64, approach: 0.6, drop: 0.03, lobNet: 0.15, attack: 0.8, slice: 0.30, flat: 0.12, aimMax: 0.95, serveVolley: 0.4, wideServe: 0.45, serveP: 0.88, dtl: 0.30 },
+  trickster: { fh: 0.9, aggr: 0.55, pow: 0.55, approach: 0.30, drop: 0.13, lobNet: 0.42, attack: 0.6, slice: 0.34, flat: 0.08, aimMax: 1.0, serveVolley: 0.04, wideServe: 0.5, serveP: 0.78, dtl: 0.34 },
 };
 export const STYLE_NAMES = Object.keys(STYLES);
 
@@ -33,6 +33,7 @@ export class AIBrain {
     this.aimMax = lerp(AI_TUNE.aimLo, AI_TUNE.aimHi, L) * this.S.aimMax;
     this.powNoise = lerp(0.15, 0.05, L);
     p.reaction = lerp(AI_TUNE.reactLo, AI_TUNE.reactHi, L);
+    p.fhBias = this.S.fh; p.aggr = clamp(this.S.aggr + 0.15 * (L - 0.5), 0, 1);
     p.perceive = lerp(0.6, 0.12, L);
   }
 
@@ -80,9 +81,11 @@ export class AIBrain {
         const off = sim.serveTimingForAim(this.i, x) / 1000 + r.gauss(0, this.sigmaT * 0.9);
         this.hitAt = Math.max(sv.tRel + 0.06, sv.tIdeal + off);
         this.servePower = power;
+        const wide = Math.abs(x - g.cx) > 0.9 * g.half;
+        this.serveShot = !first ? 'kick' : (wide && r.chance(0.75)) ? 'slice' : (r.chance(0.12) ? 'kick' : 'flat');
       }
       if (sv.stage === 'flight' && now >= this.hitAt) {
-        const ok = sim.swing(this.i, { source: 'ai', power: this.servePower });
+        const ok = sim.swing(this.i, { source: 'ai', power: this.servePower, shot: this.serveShot });
         if (ok && this.rng.chance(this.S.serveVolley) && sim.faultCount === 0) sim.setNet(this.i, true);
       }
     }
@@ -120,7 +123,7 @@ export class AIBrain {
       if (oppNet) { shot = 'lob'; power = 0.42; aimX = -sgn(oppX) * 1.5; }
       else { shot = r.chance(0.45) ? 'slice' : 'topspin'; power = 0.36; aimX = -sgn(P.x) * r.range(0.8, 1.8); }
     } else if (oppNet) {
-      const lob = r.chance(opp.set > 0.6 ? 0.55 + S.lobNet : 0.25 + S.lobNet * 0.8) && Math.abs(opp.pos.z) < 5.5;
+      const lob = r.chance(opp.set > 0.6 ? 0.72 + S.lobNet : 0.4 + S.lobNet * 0.8) && Math.abs(opp.pos.z) < 5.5;
       if (lob) { shot = 'lob'; power = r.range(0.7, 0.9); aimX = (Math.abs(oppX) > 0.8 ? -sgn(oppX) : sgn(r.next() - 0.5)) * 1.8; }
       else { shot = r.chance(0.5) ? 'flat' : 'topspin'; power = clamp(0.62 + 0.12 * L + r.range(-0.05, 0.05), 0, 1); aimX = open(r.range(0.8, 1)); }
     } else if (shortBall && pressure < 0.5 && r.chance(S.attack)) {
@@ -132,12 +135,13 @@ export class AIBrain {
     } else {
       // construct the point: work the open court, stretch the opponent, finish when he is out of position
       const corner = clamp(this.aimMax * sim.K.AIM_X, 0, 3.4);
+      const dtlK = clamp(1 - (pl.inSpeed - 17) / 14, 0.1, 1) * (shortBall ? 1.6 : 1);   // changing direction against a fast ball is risky: rally cross-court
       const stretched = Math.abs(oppX) > 1.9 || (opp.zone !== 'base' && !oppNet);
       let side, mag;
       if (Math.abs(oppX) > 1.1) {
         side = -sgn(oppX); mag = r.range(0.8, 1.0) * corner;
-        if (r.chance(S.dtl * 0.5)) { side = sgn(oppX); mag = r.range(0.55, 0.8) * corner; }      // behind him
-      } else if (r.chance(S.dtl)) { side = sgn(P.x); mag = r.range(0.7, 0.95) * corner; }          // down the line
+        if (r.chance(S.dtl * 0.5 * dtlK)) { side = sgn(oppX); mag = r.range(0.55, 0.8) * corner; }      // behind him
+      } else if (r.chance(S.dtl * dtlK)) { side = sgn(P.x); mag = r.range(0.7, 0.95) * corner; }          // down the line (only off slower / shorter balls)
       else { side = -sgn(P.x) || 1; mag = r.range(0.7, 1.0) * corner; }                          // cross-court
       aimX = side * mag;
       power = S.pow + 0.3 * (L - 0.5) + r.range(-0.08, 0.1);
@@ -156,17 +160,22 @@ export class AIBrain {
     else if (p.wantNet && pressure > 0.8 && Math.abs(P.z) > 8) sim.setNet(this.i, false);
     const sig = this.sigmaT * (1 + 1.1 * pressure) * (1 + clamp((pl.inSpeed - 25) / 45, 0, 0.4));
     // do not aim so close to the edge of the timing window that ordinary timing error drags the ball wide
-    const dirCap = clamp((sim.K.T_FULL - 1.6 * sig) / sim.K.T_FULL, 0.3, 1);
-    aimX = clamp(aimX, -sim.K.aimToX(dirCap), sim.K.aimToX(dirCap));
-    const offset = sim.timingForAim(this.i, aimX) / 1000 + r.gauss(0, sig);
+    const capE = clamp(sim.K.T_FULL_EARLY - 1.6 * sig, 0.3 * sim.K.T_FULL_EARLY, sim.K.T_FULL_EARLY), capL = clamp(sim.K.T_FULL_LATE - 1.6 * sig, 0.3 * sim.K.T_FULL_LATE, sim.K.T_FULL_LATE);
+    // aim inside the lines by the expected landing spread (timing noise x sensitivity + scatter): a safe aim, not the sideline
+    const K = sim.K, slope = K.G_T * (K.PSI_CURVE + (1 - K.PSI_CURVE)) * 0.9 / (0.5 * (K.T_FULL_EARLY + K.T_FULL_LATE));               // deg per s around typical offsets
+    const sigX = Math.hypot(22 * 0.01745 * slope * sig, 0.7);
+    const cap = clamp(4.115 - 0.35 - AI_TUNE.safe * sigX, 1.1, 3.6);
+    aimX = clamp(aimX, -cap, cap);
+    const offset = clamp(sim.timingForAim(this.i, aimX) / 1000, -capE, capL) + r.gauss(0, sig);
     return { shot, power, offset, aimX };
   }
 }
 
 /** Level -> behaviour mapping (calibrated by tests/arcade_compete.mjs). */
 export const AI_TUNE = {
-  sigmaMin: 0.002, sigmaRange: 0.085, sigmaExp: 1.0,
-  tacticLo: 0.55, tacticHi: 1.0,
+  sigmaMin: 0.014, sigmaRange: 0.090, sigmaExp: 1.6,
+  tacticLo: 0.90, tacticHi: 1.0,
   aimLo: 0.70, aimHi: 1.0,
-  reactLo: 0.24, reactHi: 0.08,
+  reactLo: 0.15, reactHi: 0.05,
+  safe: 0.55,                       // landing-spread multiples kept between the aim and the sideline
 };

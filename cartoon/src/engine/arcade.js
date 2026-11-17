@@ -80,7 +80,7 @@ export class ArcadeSim2 {
       zone: 'base', wantNet: false, deep: false, stamina: 1, set: 1,
       lagMs: c.lagMs !== undefined ? clamp(c.lagMs, 0, 200) : (c.remote ? 90 : 0), lagInit: c.lagMs !== undefined || !!c.remote,
       plan: null, recover: { x: 0, z: facing * this.K.BASE_Z }, reactUntil: 0, splitUntil: 0,
-      sw: null, cooldown: 0, walkTo: null, hold: null,
+      sw: null, cooldown: 0, walkTo: null, hold: null, acc: { x: 0, z: 0 }, fhBias: c.fhBias ?? 1, aggr: c.aggr ?? undefined, pred: null,
       reaction: this.K.HUMAN_REACTION, perceive: 0.25,
       faceAng: Math.atan2(0, -facing * 0 - facing) , gait: 0, dirv: { x: 0, z: -facing }, prevSpeed: 0, accel: 0,
       anim: mkAnim(), lastQ: 1, lastSet: 1, netThisPoint: false, approachThisPoint: false, serveAnim: null,
@@ -113,6 +113,9 @@ export class ArcadeSim2 {
   emit(e) { this.events.push(e); }
   /** Set the estimated phone latency (ms) of player i (the swing ring then closes one lag early). Normally learned from ageMs. */
   setLag(i, ms) { const p = this.P[i]; p.lagMs = clamp(ms, 0, 200); p.lagInit = true; }
+  _win(src) { const K = this.K; return src === 'remote' ? K.REMOTE : { T_MISS: K.T_MISS, T_MISS_LATE: K.T_MISS_LATE, T_PERFECT: K.T_PERFECT }; }
+  /** Full-window width for a swing at timing t (early swings and late swings have different scales: a late swing is judged tighter). */
+  _tf(t) { return t < 0 ? this.K.T_FULL_EARLY : this.K.T_FULL_LATE; }
   _lagSim(p) { return p.lagMs / 1000 * this.timeScale; }
   _noteLag(p, src, ageMs) {
     if (src !== 'remote') return;
@@ -161,19 +164,19 @@ export class ArcadeSim2 {
     const p = this.P[i], ctx = this._aimCtx(p);
     const tz = -p.facing * (depthZ ?? (HALF - 2.2));
     const psi = clamp(this._psiForTarget(p, ctx.side, ctx.C, aimX, tz), -this.K.PSI_MAX, this.K.PSI_MAX);
-    return this._timingForPsi(ctx.side, ctx.loc, psi) * 1000;
+    return this._timingForPsi(p, ctx.side, ctx.loc, psi, ctx.C, tz) * 1000;
   }
   /** Where a swing with timing offset tOffsetMs would aim for the current plan (no side effects). */
   aimPreview(i, tOffsetMs = 0, o = {}) {
     const p = this.P[i], K = this.K, ctx = this._aimCtx(p);
     if (!ctx.plan && !(this.phase === 'rally')) return null;
-    const parts = this._psiParts(ctx.side, ctx.loc, tOffsetMs / 1000);
     const tz = -p.facing * (o.depthZ ?? (HALF - 2.2));
+    const tS = tOffsetMs / 1000;
+    const parts = this._psiParts(p, ctx.side, ctx.loc, tS, ctx.C, tz);      // (direction = timing + footwork error; a late ball's extra depth does not count)
     const tg = this._targetFromPsi(p, ctx.side, ctx.C, parts.psi, tz);
     const kindKey = o.shot === 'slice' ? 'slice' : o.shot === 'lob' ? 'lob' : o.shot === 'flat' ? 'flat' : 'topspin';
     const sw = this._sideSpin(p, kindKey, parts.psi, o.power ?? 0.6);
-    const bendSign = sw === 0 ? 0 : (sw * -p.facing > 0 ? -1 : 1) * -1;      // world x sign of the bend (wy = -bs * facing * mag)
-    return { x: tg.x, z: tz, psi: parts.psi, psiT: parts.psiT, psiF: parts.psiF, psiL: parts.psiL, side: ctx.side, curveSign: -Math.sign(sw) * p.facing, sideRpm: sw / RPM_,
+    return { x: tg.x, z: tz, psi: parts.psi, psiT: parts.psiT, psiF: parts.psiF, psiL: parts.psiL, psiC: parts.psiC, side: ctx.side, curveSign: -Math.sign(sw) * p.facing, sideRpm: sw / RPM_,
       inCourt: inCourt(tg.x, tz), contact: { x: ctx.C.x, y: ctx.C.y, z: ctx.C.z } };
   }
   /** Prediction of the ball coming to player i: {path:[{x,y,z,t}], landing, contact:{x,y,z,t,side,kind}|null}; cached per plan. */
@@ -201,7 +204,7 @@ export class ArcadeSim2 {
   /** Put player i at (x,z) in a zone, standing still. */
   debugPlace(i, x, z, zone = 'base') {
     const p = this.P[i];
-    p.pos.x = x; p.pos.z = z; p.vel.x = 0; p.vel.z = 0; p.zone = zone; p.wantNet = zone === 'net' || zone === 'toNet';
+    p.pos.x = x; p.pos.z = z; p.vel.x = 0; p.vel.z = 0; p.acc.x = p.acc.z = 0; p.zone = zone; p.wantNet = zone === 'net' || zone === 'toNet';
     p.plan = null; p.sw = null; p.cooldown = 0; p.walkTo = null; p.hold = null;
     p.recover = { x, z };
   }
@@ -223,6 +226,7 @@ export class ArcadeSim2 {
     this.rl = { live: true, hitter, serve: false, shots: o.shots ?? 2, lastHitTime: this.time, cord: false, valid: false, firstBounce: false, crossed: false, returned: true, boxSign: 0, recvInfeasible: false };
     this._pushHist();
     this._afterHit(p, sol.landing || target);
+    this._sync();
     return sol;
   }
 
@@ -243,10 +247,10 @@ export class ArcadeSim2 {
     const plan = p.plan;
     const power = clamp(o.power ?? 0.6, 0, 1);
     const req = (o.shot === 'topspin' || o.shot === 'flat' || o.shot === 'slice' || o.shot === 'lob') ? o.shot : 'topspin';
-    const win = src === 'remote' ? this.K.REMOTE : { T_MISS: this.K.T_MISS, T_PERFECT: this.K.T_PERFECT };
+    const win = this._win(src);
     if (!plan || plan.swing || plan.expired) { this._airSwing(p, req, 'noball'); return true; }
     const t = ts - (plan.tContact - lagUsed);       // ideal swing moment = natural contact - latency
-    if (t < -win.T_MISS || t > win.T_MISS) { this._airSwing(p, req, t < 0 ? 'early' : 'late'); return true; }
+    if (t < -win.T_MISS || t > win.T_MISS_LATE) { this._airSwing(p, req, t < 0 ? 'early' : 'late'); return true; }
     plan.swing = { ts, t, shot: req, power, src, win };
     const kind = this._kindFor(plan, req);
     const tr = Math.max(this.time, plan.tContact);
@@ -290,16 +294,18 @@ export class ArcadeSim2 {
     if (!p.approachThisPoint) { p.approachThisPoint = true; this.stats.netApproaches[p.i]++; }
   }
 
-  /** Home position for the current zone. */
+  /** Home / recovery position: the bisector of the opponent's possible reply angles (sidelines of my side) seen from where my
+   *  ball lands (classic positioning); at the net the same at the volley depth. A wide angle therefore forces a long recovery. */
   _home(p, landing = null) {
-    const opp = this.P[1 - p.i];
-    const f = p.facing;
-    if (p.zone === 'net' || p.zone === 'toNet') {
-      return { x: clamp((landing ? landing.x : opp.pos.x) * 0.4, -1.7, 1.7), z: f * this.K.NET_Z };
-    }
-    const deep = p.deep ? this.K.BACK_Z : this.K.BASE_Z;
-    const lx = landing ? landing.x : opp.pos.x;
-    return { x: clamp(lx * 0.22, -1.3, 1.3), z: f * deep };
+    const K = this.K, opp = this.P[1 - p.i], f = p.facing;
+    const net = p.zone === 'net' || p.zone === 'toNet';
+    const zH = net ? K.NET_Z : (p.deep ? K.BACK_Z : K.BASE_Z);
+    const L = landing ? { x: landing.x, z: landing.z } : { x: opp.pos.x, z: opp.pos.z };
+    const W = K.REPLY_W, dz = Math.abs(f * zH - L.z) + 0.01;
+    const dA = Math.hypot(-W - L.x, dz), dB = Math.hypot(W - L.x, dz);
+    const X = -W + 2 * W * dA / (dA + dB);
+    const lim = net ? 1.7 : 1.5;
+    return { x: clamp(X * K.BISECT_GAIN, -lim, lim), z: f * zH };
   }
 
   // ------------------------------------------------------------------ ball history
@@ -669,7 +675,7 @@ export class ArcadeSim2 {
   _serveHit(p, o, ts, src) {
     const sv = this.sv, m = this.match;
     const first = this.faultCount === 0;
-    const win = src === 'remote' ? this.K.REMOTE : { T_MISS: this.K.T_MISS, T_PERFECT: this.K.T_PERFECT };
+    const win = this._win(src);
     const t = ts - (sv.tIdeal - this._lagUsed);
     const power = clamp(o.power ?? 0.75, 0, 1);
     const g = this._serveGeom(p);
@@ -704,13 +710,18 @@ export class ArcadeSim2 {
     const power1 = first ? power : Math.min(power, 0.62);
     const dm = first ? lerp(1.35, 0.55, power) : lerp(1.7, 1.15, power);
     const tz = g.side * (COURT.serviceLineDist - dm);
-    let speed = (first ? lerp(104, 160, power) : lerp(84, 114, power1)) * (0.8 + 0.2 * fT * fHs) * stamF / KMH;
-    const top = (first ? 650 : 3000) * Math.PI / 30;
+    // serve types: flat (default first serve), slice (bends toward the wide side), kick (topspin + sidespin: high, jumps wide; default second serve)
+    const stype = o.shot === 'slice' ? 'slice' : (o.shot === 'topspin' || o.shot === 'kick') ? 'kick' : o.shot === 'flat' ? 'flat' : (first ? 'flat' : 'kick');
+    const sv0 = stype === 'flat' ? (first ? lerp(104, 160, power) : lerp(90, 124, power1))
+      : stype === 'slice' ? (first ? lerp(96, 148, power) : lerp(84, 116, power1)) : (first ? lerp(88, 128, power) : lerp(84, 114, power1));
+    let speed = sv0 * (0.8 + 0.2 * fT * fHs) * stamF * this.K.ballSpeedScale / KMH;
+    const top = (stype === 'flat' ? (first ? 650 : 1500) : stype === 'slice' ? -400 : 3300) * Math.PI / 30 * this.K.spinScale;
+    const sideSv = (stype === 'slice' ? 1700 : stype === 'kick' ? 1250 : 0) * this.K.sideScale * (0.75 + 0.25 * power) * Math.PI / 30 * (-g.boxSign * p.facing);   // bends toward the wide side
     const q = clamp(fT * stamF * fHs, 0, 1);
     const risk = first ? (0.7 + 0.6 * power) : 0.55;
     const sd = (0.2 + 1.7 * Math.pow(1 - q, 1.3)) * risk;
     const sl = (0.12 + 1.3 * Math.pow(1 - q, 1.3)) * risk;
-    const sol = solveLaunch({ pos, target: { x: tx, z: tz }, speed, top, surface: this.surface, clear: first ? 0.14 : 0.32 });
+    const sol = solveLaunch({ pos, target: { x: tx, z: tz }, speed, top, side: sideSv, surface: this.surface, clear: first ? 0.14 : 0.32, tune: this.ft });
     const sc = scatterLaunch(sol, sd, sl, this.rng);
     // apply
     const b = this.b;
@@ -726,14 +737,15 @@ export class ArcadeSim2 {
       boxSign: g.boxSign, returned: false, recvInfeasible: false, first,
     };
     const spd = Math.hypot(sc.vel.x, sc.vel.y, sc.vel.z) * KMH;
-    const shot = { by: p.i, shot: first ? 'flat' : 'topspin', side: 'fh', timing: label, timingMs: Math.round(t * 1000), dir: clamp(t / this.K.T_FULL, -1, 1),
+    const shot = { by: p.i, shot: stype === 'kick' ? 'topspin' : stype, serveType: stype, topRpm: top / RPM_, sideRpm: sideSv / RPM_, curveM: sol.curveM, netClear: sol.netClear, contact: { fwd: 0, lat: 0, h: pos.y }, face: 0, dirChange: 0,
+      bounceApex: sol.landVy !== undefined ? 0.0335 + sol.landVy * sol.landVy / (2 * G) : null, side: 'fh', timing: label, timingMs: Math.round(t * 1000), dir: clamp(t / this.K.T_FULL, -1, 1),
       aim: clamp(aim, -1, 1), power, quality: q, setv: 1, speedKmh: spd, spinRpm: Math.abs(top) * 30 / Math.PI, target: { x: tx, z: tz }, mishit: label === 'wide' ? 'wide' : null, serve: true, first };
     this.lastShot = shot;
     p.lastQ = q;
     p.serveAnim.contactPos = pos;
     p.serveAnim.contact = { lat: (pos.x - p.pos.x) * p.handX, fwd: (pos.z - p.pos.z) * -p.facing, h: pos.y };
     this.emit({ type: 'hit', by: p.i, shot: shot.shot, side: 'fh', timing: label, timingMs: shot.timingMs, dir: shot.dir, aim: shot.aim, power, quality: q, speedKmh: spd,
-      pos: { x: pos.x, y: pos.y, z: pos.z }, serve: true, mishit: shot.mishit, first });
+      pos: { x: pos.x, y: pos.y, z: pos.z }, serve: true, mishit: shot.mishit, first, serveType: stype, topRpm: shot.topRpm, sideRpm: shot.sideRpm, curveM: shot.curveM, contact: shot.contact, face: 0, dirChange: 0, netClear: shot.netClear, bounceApex: shot.bounceApex });
     this._afterHit(p, null);
     if (p.wantNet) { this._zone(p, 'toNet'); this._noteApproach(p); }
     return true;
@@ -775,7 +787,8 @@ export class ArcadeSim2 {
   // ------------------------------------------------------------------ intercept planning
   _vmaxOf(p) { return this.K.VMAX * (0.72 + 0.28 * p.stamina); }
   _moveTime(p, d, tx, tz) {
-    const vm = this._vmaxOf(p), a = this.K.ACC, bdec = this.K.DEC;
+    const back = d > 0.01 ? Math.max(0, tz * p.facing) / d : 0;                       // share of the run that goes away from the net (backpedalling is slower)
+    const vm = this._vmaxOf(p) * (1 - (1 - this.K.BACKRUN) * back), a = this.K.ACC, bdec = this.K.DEC;
     let t;
     const dEq = vm * vm * 0.5 * (1 / a + 1 / bdec);
     if (d < dEq) { const v = Math.sqrt(2 * d / (1 / a + 1 / bdec)); t = v / a + v / bdec; }
@@ -809,7 +822,7 @@ export class ArcadeSim2 {
     const pred = simulateTrajectory(b, { surface: this.surface, dt: PLAN_DT, path: true, pathDt: 1 / 60, stopAfterBounces: 2, maxTime: 3.6, tuning: this.ft });
     p.plan = null;
     p.lastPlanMargin = undefined;
-    p.pred = { path: pred.path, landing: pred.landing, contact: null };
+    p.pred = { path: pred.path, landing: pred.landing, contact: null, t0: this.time };            // path[k].t is relative to t0 (sim time)
     if (pred.hitNet) return;
     const f = p.facing;
     const b0 = b.bounces;
@@ -954,14 +967,27 @@ export class ArcadeSim2 {
   /** World x sign of the stroke's hitting side (fh: racket-arm side; bh: the other side). */
   _hs(p, side) { return (side === 'fh' ? 1 : -1) * p.handX; }
   /** Face yaw parts (deg, + = pulled across the body) from timing t (s), and the contact in the body frame loc {fwd, lat}. */
-  _psiParts(side, loc, t, cache = {}) {
+  _psiParts(p, side, loc, t, C, tz, cache = {}) {
     const K = this.K;
-    const psiT = K.G_T * clamp(-t / K.T_FULL, -K.PSI_T_CLAMP, K.PSI_T_CLAMP);
+    const x = clamp(-t / this._tf(t), -K.PSI_T_CLAMP, K.PSI_T_CLAMP), ax = Math.abs(x);
+    const psiT = this._gT(C, tz) * (x < 0 ? -1 : 1) * (K.PSI_CURVE * ax + (1 - K.PSI_CURVE) * ax * ax);     // gentle near perfect timing, steeper toward the window edge
     const psiF = K.G_F * (loc.fwd - K.IDEAL_FWD);
     const psiL = K.G_L * (loc.lat - K.IDEAL_LAT[side]);
-    cache.psiT = psiT; cache.psiF = psiF; cache.psiL = psiL;
-    cache.psi = clamp(psiT + psiF + psiL, -K.PSI_MAX, K.PSI_MAX);
+    const psiC = this._psiBias(p, side, C, tz);
+    cache.psiT = psiT; cache.psiF = psiF; cache.psiL = psiL; cache.psiC = psiC;
+    cache.psi = clamp(psiT + psiF + psiL + psiC, -K.PSI_MAX, K.PSI_MAX);
     return cache;
+  }
+  /** Timing -> angle gain: the shorter the distance to the target depth (volleys), the more angle per ms, so that a timing offset
+   *  gives a similar lateral displacement at the target. */
+  _gT(C, tz) {
+    const K = this.K, d = Math.max(6, Math.abs(tz - C.z));
+    return K.G_T * clamp(Math.pow(K.PSI_REF_DIST / d, K.PSI_DIST_EXP), 0.75, 2.0);
+  }
+  /** Neutral court-aware bias (deg): from a wide contact the neutral swing points back toward the court (G_C = 0 -> pure body axis). */
+  _psiBias(p, side, C, tz) {
+    const dz = Math.max(4, Math.abs(tz - C.z));
+    return this.K.G_C * Math.atan(Math.abs(C.x) / dz) * 180 / Math.PI * this._hs(p, side) * (C.x < 0 ? -1 : 1);
   }
   /** Where the ray from contact point C at face yaw psi (deg) meets the depth line z = tz. */
   _targetFromPsi(p, side, C, psi, tz) {
@@ -975,11 +1001,14 @@ export class ArcadeSim2 {
     const hs = this._hs(p, side);
     return Math.atan2(-hs * (tx - C.x), Math.max(0.3, -p.facing * (tz - C.z))) * 180 / Math.PI;
   }
-  /** Timing offset (s) that gives face yaw `psi` at contact geometry `loc` (inverse of _psiParts). */
-  _timingForPsi(side, loc, psi) {
-    const K = this.K;
-    const psiT = psi - K.G_F * (loc.fwd - K.IDEAL_FWD) - K.G_L * (loc.lat - K.IDEAL_LAT[side]);
-    return -clamp(psiT / K.G_T, -K.PSI_T_CLAMP, K.PSI_T_CLAMP) * K.T_FULL;
+  /** Timing offset (s) that gives face yaw `psi` at contact geometry `loc` (inverse of _psiParts). A late swing meets the ball
+   *  deeper (fwd shrinks by vIn * t), which is accounted for with a short fixed-point iteration. */
+  _timingForPsi(p, side, loc, psi, C, tz) {
+    const K = this.K, a = K.PSI_CURVE;
+    const psiT = psi - K.G_F * (loc.fwd - K.IDEAL_FWD) - K.G_L * (loc.lat - K.IDEAL_LAT[side]) - this._psiBias(p, side, C, tz);
+    const y = Math.abs(psiT) / this._gT(C, tz);                               // invert y = a x + (1-a) x^2
+    const x = Math.min((1 - a) < 1e-6 ? y / a : (-a + Math.sqrt(a * a + 4 * (1 - a) * y)) / (2 * (1 - a)), K.PSI_T_CLAMP);
+    return psiT >= 0 ? -x * K.T_FULL_EARLY : x * K.T_FULL_LATE;
   }
   /** Signed sidespin (rad/s about the vertical axis) for a stroke: topspin-like strokes hook toward the non-hitting side
    *  (forehand) / hitting side (backhand) = world -handX; slice-like carve the other way (+handX). */
@@ -1019,9 +1048,10 @@ export class ArcadeSim2 {
     }
     const t = sw.t;
     const at = Math.abs(t);
-    const uW = clamp((at - K.T_FULL) / (K.T_MISS - K.T_FULL), 0, 1);
+    const tF = this._tf(t), tM = t < 0 ? K.T_MISS : K.T_MISS_LATE;
+    const uW = clamp((at - tF) / (tM - tF), 0, 1);
     const win = sw.win;
-    const label = at <= win.T_PERFECT ? 'perfect' : at > K.T_FULL ? 'wide' : t < 0 ? 'early' : 'late';
+    const label = at <= win.T_PERFECT ? 'perfect' : at > tF ? 'wide' : t < 0 ? 'early' : 'late';
     const rd = Math.hypot(snap.pos.x - plan.standTrue.x, snap.pos.z - plan.standTrue.z);
     const reachT = clamp((loc.lat - 1.0) / Math.max(0.1, maxR - 1.0), 0, 1);
     const vf = (snap.vel.z * -p.facing);
@@ -1041,8 +1071,8 @@ export class ArcadeSim2 {
     const fS = 0.92 + 0.08 * snap.stamina;
     let fT;
     if (at <= win.T_PERFECT) fT = 1;
-    else if (at <= K.T_FULL) fT = lerp(1, 0.88, (at - win.T_PERFECT) / (K.T_FULL - win.T_PERFECT));
-    else fT = 0.88 - 0.4 * clamp((at - K.T_FULL) / (K.T_MISS - K.T_FULL), 0, 1);
+    else if (at <= tF) fT = lerp(1, 0.88, (at - win.T_PERFECT) / (tF - win.T_PERFECT));
+    else fT = 0.88 - 0.4 * clamp((at - tF) / (tM - tF), 0, 1);
     const fGp = Math.max(0.15, 1 - K.PRESSURE_Q * Math.max(0, (p.incomingGp || 0) - 0.3) / 0.7);     // cramped by a deep / wide / fast incoming ball
     const fLate = loc.fwd >= K.FWD_CLEAN ? 1 : 1 - 0.55 * clamp((K.FWD_CLEAN - loc.fwd) / (K.FWD_CLEAN - K.FWD_WHIFF), 0, 1);   // contact far behind the ideal point (late swing)
     let q = clamp(fGp * fLate * (0.1 + 0.9 * setv) * fPace * fH * fS * fT * fSpin, 0, 1);
@@ -1056,8 +1086,8 @@ export class ArcadeSim2 {
     const topF = (side === 'fh' ? 1.10 : 1.0) * (reachT > 0.6 ? 0.8 : 1) * K.spinScale;
     if (kind === 'lob') {
       params = strokeParams('topspin', 0.4);
-      tz = fOpp * (HALF - lerp(2.6, 1.3, power));
-      top = 1100 * RPM_ * topF;
+      tz = fOpp * (HALF - lerp(2.2, 1.0, power));
+      top = 1500 * RPM_ * topF;
       elevation = lerp(LOB_EL[0], LOB_EL[1], power);
       speed = 20; clear = 0.2; kindKey = 'lob';
     } else {
@@ -1083,7 +1113,8 @@ export class ArcadeSim2 {
       speed = Math.max(speed, 8);
     }
     // ---- direction from the contact point (section 3.2)
-    const parts = this._psiParts(side, loc, t);
+    const locD = this._local(p, side, snap.pos, plan.P);       // body vs the PLANNED contact: footwork / set error, not the late ball's extra depth
+    const parts = this._psiParts(p, side, locD, t, B.pos, tz);
     let psi = parts.psi;
     if (kind === 'volley' && setv >= 0.8 && !isDrop) psi = clamp(psi * 1.2, -K.PSI_MAX, K.PSI_MAX);    // a set volley opens sharper angles
     const tg = this._targetFromPsi(p, side, B.pos, psi, tz);
@@ -1105,7 +1136,7 @@ export class ArcadeSim2 {
     const oppP = this.P[1 - p.i];
     const netPres = (kind !== 'lob' && (oppP.zone === 'net' || (oppP.zone === 'toNet' && Math.abs(oppP.pos.z) < 7.5))) ? 1 + K.NET_PRESSURE * Math.pow(oppP.set, 2) : 1;
     const pw = (0.72 + 0.56 * power) * netPres * dirK * K.SCATTER;
-    const kScale = kind === 'smash' ? 1.15 : kind === 'volley' ? 0.5 + 3.2 * (1 - setv) : kind === 'lob' ? 0.9 : 1;
+    const kScale = kind === 'smash' ? 1.15 : kind === 'volley' ? (0.5 + 3.2 * (1 - setv)) * K.VOLLEY_SCATTER : kind === 'lob' ? 0.9 : 1;
     const sd = (0.16 + 1.9 * Math.pow(1 - q, 1.3)) * pw * (1 + 0.45 * edge) * kScale + (label === 'wide' ? 0.9 * uW : 0);
     const sl = (0.2 + 2.2 * Math.pow(1 - q, 1.3)) * pw * (1 + 1.5 * edge) * kScale + (label === 'wide' ? 0.7 * uW : 0);
     const sCl = (0.06 + 0.6 * Math.pow(1 - q, 1.2)) * pw * kScale + (label === 'wide' ? 0.2 * uW : 0);
@@ -1128,8 +1159,8 @@ export class ArcadeSim2 {
       bounceApex: sol.landVy !== undefined ? 0.0335 + sol.landVy * sol.landVy / (2 * G) : null, psi: parts,
     };
     const shot = {
-      by: p.i, shot: shotName, side, timing: label, timingMs: Math.round(t * 1000), dir: clamp(t / K.T_FULL, -1, 1), aim,
-      power, quality: q, setv, pressure: setv * fPace, speedKmh, spinRpm: Math.abs(top) / RPM_, target: { x: tx, z: tz }, mishit, ...extra,
+      by: p.i, shot: shotName, side, timing: label, timingMs: Math.round(t * 1000), dir: clamp(t / tF, -1, 1), aim,
+      power, quality: q, setv, pressure: setv * fPace, speedKmh, spinRpm: Math.abs(top) / RPM_, target: { x: tx, z: tz }, mishit, pos: { x: B.pos.x, y: B.pos.y, z: B.pos.z }, ...extra,
     };
     this.lastShot = shot;
     p.lastQ = q; p.lastSet = setv;
@@ -1138,7 +1169,7 @@ export class ArcadeSim2 {
     if (kind === 'smash') { p.vy = 3.4; }
     this.emit({
       type: 'hit', by: p.i, shot: shotName, side, timing: label, timingMs: shot.timingMs, dir: shot.dir, aim: shot.aim, power, quality: q, setv,
-      speedKmh, pos: { x: B.pos.x, y: B.pos.y, z: B.pos.z }, mishit, ...extra,
+      speedKmh, pos: { x: B.pos.x, y: B.pos.y, z: B.pos.z }, mishit, target: shot.target, ...extra,
     });
     const now = this.time;
     if (now - tb > 1e-6) this._catchUp(now - tb);
@@ -1172,7 +1203,7 @@ export class ArcadeSim2 {
         if (time > pl.tContact && !pl.swing) { target = this._standFor(p, pl.side, this.b.pos, pl.kind); arriveBy = 0; vcap *= 1.15; kind = 'chase'; }
       } else {
         target = p.recover; kind = 'recover';
-        if (p.zone === 'toNet') vcap = this.K.RUSH_VMAX; else if (p.zone === 'toBase') vcap = this._vmaxOf(p) * 0.92; else vcap *= 0.7;
+        if (p.zone === 'toNet') vcap = this.K.RUSH_VMAX; else if (p.zone === 'toBase') vcap = this._vmaxOf(p) * 0.92; else vcap *= this.K.RECOVER_SPEED;
         if (p.zone === 'toNet' || p.zone === 'net') { p.recover = this._home(p); target = p.recover; }
       }
       if (p.zone === 'toNet' && kind === 'chase') vcap = Math.max(vcap, this.K.RUSH_VMAX * 0.95);
@@ -1199,12 +1230,13 @@ export class ArcadeSim2 {
     if (target) {
       dx = target.x - p.pos.x; dz = target.z - p.pos.z; dist = Math.hypot(dx, dz);
       if (dist > 1e-4) {
-        let vd = Math.min(vcap, Math.sqrt(2 * this.K.DEC * 0.85 * Math.max(dist - 0.02, 0)));
+        let vd = Math.min(vcap, Math.sqrt(2 * this.K.DEC * this.K.BRAKE_K * Math.max(dist - 0.02, 0)));
         if (arriveBy) {
           const tl = arriveBy - time;
           if (tl > 0.03) vd = Math.min(vd, Math.max(1.25 * dist / tl, 0.9));
         }
         let ux = dx / dist, uz = dz / dist;
+        vd *= 1 - (1 - this.K.BACKRUN) * Math.max(0, uz * p.facing);
         let vx = ux * vd, vz = uz * vd;
         if (p.zone === 'net') vx *= this.K.NET_LATERAL;
         dvx = vx; dvz = vz;
@@ -1212,14 +1244,19 @@ export class ArcadeSim2 {
     }
     const curS = Math.hypot(p.vel.x, p.vel.z);
     const desS = Math.hypot(dvx, dvz);
-    const lim = (desS < curS ? this.K.DEC : (p.zone === 'toNet' ? this.K.RUSH_ACC : this.K.ACC)) * h;
-    let ex = dvx - p.vel.x, ez = dvz - p.vel.z;
-    const em = Math.hypot(ex, ez);
-    if (em > lim) { ex *= lim / em; ez *= lim / em; }
-    p.vel.x += ex; p.vel.z += ez;
+    // jerk-limited S-curve: wanted acceleration = velocity error / tau, magnitude-limited (ACC / DEC), then slewed by JERK
+    const aMax = desS < curS ? this.K.DEC : (p.zone === 'toNet' ? this.K.RUSH_ACC : this.K.ACC);
+    let ax = (dvx - p.vel.x) / this.K.TAU_V, az2 = (dvz - p.vel.z) / this.K.TAU_V;
+    const am = Math.hypot(ax, az2);
+    if (am > aMax) { ax *= aMax / am; az2 *= aMax / am; }
+    let jx = ax - p.acc.x, jz = az2 - p.acc.z;
+    const jm = Math.hypot(jx, jz), jl = this.K.JERK * h;
+    if (jm > jl) { jx *= jl / jm; jz *= jl / jm; }
+    p.acc.x += jx; p.acc.z += jz;
+    p.vel.x += p.acc.x * h; p.vel.z += p.acc.z * h;
     if (!target || (dist < 0.03 && Math.hypot(p.vel.x, p.vel.z) < 0.4)) {
-      if (!target && curS < 0.05) { p.vel.x = 0; p.vel.z = 0; }
-      if (target && dist < 0.03) { p.vel.x = 0; p.vel.z = 0; p.pos.x = target.x; p.pos.z = target.z; }
+      if (!target && curS < 0.05) { p.vel.x = 0; p.vel.z = 0; p.acc.x = p.acc.z = 0; }
+      if (target && dist < 0.03) { p.vel.x = 0; p.vel.z = 0; p.acc.x = p.acc.z = 0; p.pos.x = target.x; p.pos.z = target.z; }
     }
     const sp = Math.hypot(p.vel.x, p.vel.z);
     p.pos.x += p.vel.x * h; p.pos.z += p.vel.z * h;

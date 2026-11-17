@@ -27,7 +27,7 @@ const ROLL_DECEL = 1.2;                     // m/s^2 rolling resistance
 /** Extra vertical rebound (fraction of the tangential impulse) when the ball grips: topspin 'kick' from ball/court deformation. */
 export const GRIP_KICK = { hard: 0.12, clay: 0.2, grass: 0.04 };
 export const NET_CORD_BELOW = 0.02;         // ball centre this far under the tape still counts as tape contact
-const TOP_FWD = 0.30, SKID_H = 0.45, SKID_V = 0.30;   // coefficients of kickGain / skidGain at the bounce
+const TOP_FWD = 0.12, SKID_H = 0.8, SKID_V = 0.30, KICK_Y = 1.7, POP = 0.85;   // coefficients of kickGain / skidGain at the bounce
 const NET_HIT_DAMP = { vx: 0.2, vy: 0.3, vz: -0.12, spin: 0.3 };
 
 /** Net tape height at lateral position x (m). Beyond the posts there is no net. */
@@ -105,7 +105,7 @@ export function bounceVelocity(v, w, surf, surfKey = 'hard', tune = null) {
     const maxF = mu * jn;
     grip = need <= maxF;
     const J = grip ? need : maxF;
-    const kg = tune ? tune.kickGain : 1;
+    const kg = tune ? 1 + KICK_Y * (tune.kickGain - 1) : 1;                     // (gain 1 -> exactly ball.js)
     if (grip) v.y += (GRIP_KICK[surfKey] ?? 0.1) * J * kg;
     const jx = -J * ux / ut, jz = -J * uz / ut;
     v.x += jx; v.z += jz;
@@ -113,8 +113,12 @@ export function bounceVelocity(v, w, surf, surfKey = 'hard', tune = null) {
       // arcade gains: topspin (impulse along the travel direction) jumps forward; backspin (against it) skids and dies
       const vh0 = Math.hypot(vx0, vz0) + 1e-9;
       const along = (jx * vx0 + jz * vz0) / vh0;
-      if (along > 0) { const f = TOP_FWD * (kg - 1); v.x += jx * f; v.z += jz * f; }
-      else if (along < 0 && tune.skidGain !== 1) {
+      const topIn = (w.x * vz0 - w.z * vx0) / vh0;                              // + topspin, - backspin (rad/s)
+      if (topIn >= 0) {
+        const f = TOP_FWD * (tune.kickGain - 1); v.x += jx * f; v.z += jz * f;
+        v.y *= 1 + POP * (tune.kickGain - 1) * Math.min(1, Math.max(0, 1 - jn / (1 + e) / 9));      // shallow balls pop up a little (flat drives)
+      }
+      else if (along < 0 && tune.skidGain !== 1) {            // backspin: skids
         const sg = tune.skidGain - 1, bs = Math.min(1, -along / 3.2);
         const f = SKID_H * sg;
         let nx = v.x + jx * f, nz = v.z + jz * f;
