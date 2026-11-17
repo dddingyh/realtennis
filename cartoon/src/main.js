@@ -26,7 +26,7 @@ const mods = { ArcadeSim: null, attachKeyboard: null, KEYBOARD_HELP: null, Remot
 async function loadMods() {
   const tryImport = async (p) => { try { return await import(p); } catch (e) { console.warn('optional module unavailable:', p, e && e.message); return null; } };
   const [simM, kbM, remM, chM] = await Promise.all([
-    Q.get('stub') === '1' ? null : tryImport('./sim/arcade.js'), tryImport('./input/keyboard.js'), tryImport('./input/remote.js'), tryImport('./view/character/index.js'),
+    Q.get('stub') === '1' ? null : tryImport(Q.get('engine') === 'v2' ? './engine/sim.js' : './sim/arcade.js'), tryImport('./input/keyboard.js'), tryImport('./input/remote.js'), tryImport('./view/character/index.js'),
   ]);
   mods.ArcadeSim = simM && simM.ArcadeSim; mods.attachKeyboard = kbM && kbM.attachKeyboard; mods.KEYBOARD_HELP = kbM && kbM.KEYBOARD_HELP;
   mods.RemoteAdapter = remM && (remM.RemoteAdapter || remM.RemoteInput); mods.createCharacter = chM && chM.createCharacter; mods.DEFAULT_LOOKS = chM && chM.DEFAULT_LOOKS;

@@ -191,3 +191,7 @@ Tests: `node tests/engine_physics.mjs` (§2 table), `engine_shot.mjs` (psi model
 - `predict` uses the exact live physics but not the net-cord randomness; a re-plan at the bounce can move the stand target by up to ~0.15 m (never > 0.3 m, tested).
 - Sidespin of a *received* ball only changes quality through the incoming-topspin term; there is no separate sidespin handling penalty.
 - ARCADE.md "remote" timing constants changed (windows listed above); v1 tests that hard-code 28/36/240/275 ms need the numbers in `tests/engine_core.mjs`.
+
+### E-SIM notes, addendum (feel pass)
+- Timing windows are sided: `T_FULL_EARLY .140`, `T_FULL_LATE .100`, `T_MISS .260`, `T_MISS_LATE .180` (remote +0.035). `IDEAL_FWD` is now 1.30 m (`FWD_CLEAN -0.7`, `FWD_WHIFF -2.6`) so +T_FULL_LATE is a clean hit. Direction uses psi_t (timing) + psi_f/psi_l from the body-vs-PLANNED-contact error (footwork), not from the extra depth of a late ball; `timingForAim` / `aimPreview` / the AI use the same maps. `G_C` is 0.9.
+- Bounce height: a soft cap on the post-bounce vertical speed (`KNEE_VY 5.8`, `CAP_VY 7.6`, lower for very steep balls such as lobs) in flight.js. `bounceApex` in `hit` / `lastShot` is now the real simulated apex of the ball centre after the first bounce (drag included), not vy^2/2g. Topspin drives ~1.5-1.8 m, flat ~0.9, slice ~0.4, lobs <= 2.4 m, kick serve ~1.7 m.

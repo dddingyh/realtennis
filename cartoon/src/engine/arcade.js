@@ -738,7 +738,7 @@ export class ArcadeSim2 {
     };
     const spd = Math.hypot(sc.vel.x, sc.vel.y, sc.vel.z) * KMH;
     const shot = { by: p.i, shot: stype === 'kick' ? 'topspin' : stype, serveType: stype, topRpm: top / RPM_, sideRpm: sideSv / RPM_, curveM: sol.curveM, netClear: sol.netClear, contact: { fwd: 0, lat: 0, h: pos.y }, face: 0, dirChange: 0,
-      bounceApex: sol.landVy !== undefined ? 0.0335 + sol.landVy * sol.landVy / (2 * G) : null, side: 'fh', timing: label, timingMs: Math.round(t * 1000), dir: clamp(t / this.K.T_FULL, -1, 1),
+      bounceApex: sol.bounceApex, side: 'fh', timing: label, timingMs: Math.round(t * 1000), dir: clamp(t / this.K.T_FULL, -1, 1),
       aim: clamp(aim, -1, 1), power, quality: q, setv: 1, speedKmh: spd, spinRpm: Math.abs(top) * 30 / Math.PI, target: { x: tx, z: tz }, mishit: label === 'wide' ? 'wide' : null, serve: true, first };
     this.lastShot = shot;
     p.lastQ = q;
@@ -1087,7 +1087,7 @@ export class ArcadeSim2 {
     if (kind === 'lob') {
       params = strokeParams('topspin', 0.4);
       tz = fOpp * (HALF - lerp(2.2, 1.0, power));
-      top = 1500 * RPM_ * topF;
+      top = 1000 * RPM_ * topF;
       elevation = lerp(LOB_EL[0], LOB_EL[1], power);
       speed = 20; clear = 0.2; kindKey = 'lob';
     } else {
@@ -1156,7 +1156,7 @@ export class ArcadeSim2 {
     const contact = { fwd: loc.fwd, lat: loc.lat, h: B.pos.y };
     const extra = {
       topRpm: top / RPM_, sideRpm: sideW / RPM_, curveM: sol.curveM, contact, face: psi, dirChange, dirK, netClear: sol.netClear,
-      bounceApex: sol.landVy !== undefined ? 0.0335 + sol.landVy * sol.landVy / (2 * G) : null, psi: parts,
+      bounceApex: sol.bounceApex, psi: parts,
     };
     const shot = {
       by: p.i, shot: shotName, side, timing: label, timingMs: Math.round(t * 1000), dir: clamp(t / tF, -1, 1), aim,

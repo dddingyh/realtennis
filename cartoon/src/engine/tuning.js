@@ -87,7 +87,7 @@ export const PSI_T_CLAMP = 1.7;
 export const SIDE_RPM = { topspin: 1500, flat: 500, slice: 1500, lob: 800, volley: 600, smash: 350 };
 export const SIDE_K0 = 0.6, SIDE_K1 = 0.55;
 // -- errors / quality
-export const SCATTER = 0.4;                 // global scale of the landing scatter
+export const SCATTER = 0.22;                // global scale of the landing scatter
 export const DIR_CHANGE_K = 1.3;            // scatter multiplier = 1 + K * (angle/45deg)^0.8 * clamp(vIn/30, .4, 1.3)
 export const SPIN_IN_K = 0.5;               // quality loss from heavy incoming topspin kick above the shoulder
 // -- movement
@@ -102,9 +102,9 @@ export const Z_BACK = 13.7, Z_FRONT = 11.0, MARGIN_MIN = 0.12;       // preferre
 export const PACE_PEN_FH = 0.014, PACE_PEN_BH = 0.011;               // quality loss per m/s of incoming speed above 22 (bh steadier)
 export const FH_POWER = 1.04, BH_POWER = 0.97, TX_MAX = 7.5;
 
-export const VOLLEY_SCATTER = 1.3;                                    // volleys keep their risk when the global scatter is low
+export const VOLLEY_SCATTER = 1.7;                                    // volleys keep their risk when the global scatter is low
 export const RECOVER_SPEED = 0.85;                                     // recovery run speed (share of VMAX)
-export const BACKRUN = 0.7;                                          // speed factor when running straight away from the net (lobs!)
+export const BACKRUN = 0.62;                                         // speed factor when running straight away from the net (lobs!)
 export const LOCK_TIME = 0.45;                                       // side is locked this long before contact
 
 export const TAU_V = 0.09, BRAKE_K = 0.7;                           // velocity-tracking time constant (s), braking-profile deceleration fraction

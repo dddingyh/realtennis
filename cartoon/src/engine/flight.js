@@ -28,6 +28,7 @@ const ROLL_DECEL = 1.2;                     // m/s^2 rolling resistance
 export const GRIP_KICK = { hard: 0.12, clay: 0.2, grass: 0.04 };
 export const NET_CORD_BELOW = 0.02;         // ball centre this far under the tape still counts as tape contact
 const TOP_FWD = 0.12, SKID_H = 0.8, SKID_V = 0.30, KICK_Y = 1.7, POP = 0.85;   // coefficients of kickGain / skidGain at the bounce
+const KNEE_VY = 5.8, CAP_VY = 7.6;                   // post-bounce vertical speed soft clamp (apex 1.2 m .. 1.6 m; heavy topspin saturates)
 const NET_HIT_DAMP = { vx: 0.2, vy: 0.3, vz: -0.12, spin: 0.3 };
 
 /** Net tape height at lateral position x (m). Beyond the posts there is no net. */
@@ -97,7 +98,7 @@ export function bounceVelocity(v, w, surf, surfKey = 'hard', tune = null) {
   const ux = v.x + R * w.z;                    // contact-point velocity (w x r_c with r_c = (0,-R,0))
   const uz = v.z - R * w.x;
   const ut = Math.hypot(ux, uz);
-  const vx0 = v.x, vz0 = v.z, wyIn = w.y;
+  const vx0 = v.x, vz0 = v.z, wyIn = w.y, vyIn0 = -v.y;
   v.y = -e * v.y;
   let grip = false;
   if (ut > 1e-6) {
@@ -130,6 +131,10 @@ export function bounceVelocity(v, w, surf, surfKey = 'hard', tune = null) {
     }
     w.x += -jz / (k * R);                      // dw = (r_c x J) / (k m R^2)
     w.z += jx / (k * R);
+  }
+  if (tune && tune.kickGain > 1) {                      // soft cap on the bounce height; very steep balls (lobs) are capped lower
+    const cap = CAP_VY - 0.24 * Math.max(0, vyIn0 - 9), knee = Math.min(KNEE_VY, cap - 1);
+    if (v.y > knee) v.y = knee + (cap - knee) * Math.tanh((v.y - knee) / (cap - knee));
   }
   if (tune && tune.sideKick) {
     // sidespin (about the vertical axis) kicks the ball sideways off the court, in the direction Magnus was bending it (w x v)

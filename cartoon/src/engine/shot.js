@@ -113,10 +113,12 @@ export function solveLaunch(spec) {
     slopeV = Math.max(0.3, (radial(r3, pos) - radial(r, pos)) / 0.5);
   }
   // maximum lateral deviation of the real flight from the straight launch line (signed, + = toward +x)
-  let curveM = 0;
+  let curveM = 0, bounceApex = null;
   if (side !== 0 || tune) {
-    const rp = fly(pos, v, el, hx, hz, top, side, surface, tune, SOLVE_DT, true);
+    const rp = simulateTrajectory({ pos, vel: { x: v * Math.cos(el) * hx, y: v * Math.sin(el), z: v * Math.cos(el) * hz }, spin: makeSpin(hx, hz, top, side) },
+      { surface, dt: SOLVE_DT, stopAfterBounces: 2, maxTime: 4.5, tuning: tune, path: true, pathDt: 1 / 30 });
     for (const q of rp.path) {
+      if (q.b >= 1) { bounceApex = Math.max(bounceApex ?? 0, q.y); continue; }
       const d = (-(q.x - pos.x) * hz + (q.z - pos.z) * hx) * (hz <= 0 ? 1 : -1);   // lateral offset from the launch line, + = toward +x (world), for either court end
       if (Math.abs(d) > Math.abs(curveM)) curveM = d;
     }
@@ -127,7 +129,7 @@ export function solveLaunch(spec) {
     spin: makeSpin(hx, hz, top, side), speed: v, el, hx, hz, az, D, slope, slopeV, top, side, tune,
     fixedEl,
     landing: r.landing ? { x: r.landing.x, z: r.landing.z } : null,
-    netClear: r.netClear, hitNet: r.hitNet, curveM, landVy: r.landing ? r.landing.vy : undefined,
+    netClear: r.netClear, hitNet: r.hitNet, curveM, bounceApex, landVy: r.landing ? r.landing.vy : undefined,
     ok: !!r.landing && !r.hitNet,
   };
 }

@@ -69,6 +69,24 @@ for t in tests/arcade_core.mjs tests/arcade_match.mjs tests/arcade_compete.mjs t
 
 卡通版使用 three.js r170（MIT，已放在 `vendor/three/`），需要浏览器支持 WebGL。
 
+## 物理实验室（引擎 v2，`cartoon/lab.html`）
+
+新的网球引擎（`cartoon/src/engine/`）在这个页面里调试：简单的胶囊体球员，重点看球路和手感。
+
+- **弧线**：放大的马格努斯效应和侧旋——上旋下坠、落地前冲，切削飘后贴地滑，内拐外正手在空中拐出“香蕉球”。
+- **击球点决定方向**：挥拍时机决定在挥拍弧线的哪个位置碰到球；早 = 拉向身体另一侧，晚 = 推出去；方向从实际击球位置计算，所以被调到边路时斜线角度更大。
+- **正反手自动选择**（可侧身打正手），击球前锁定并提示；**自动跑位**一次规划到位，打完回到对手回球角度的中线。
+- **策略**：对着又快又重的来球强行变线失误率更高；斜线相持、找机会变线、调动对手再打空当都更划算。
+- 叠加显示：来球预测轨迹、击球点、瞄准扇面（现在挥 / 早晚 100 ms 挥会落在哪里）、上一拍实际弧线与发射直线的对比、落点小地图。
+- 模式：对打 AI / 发球机 / 击球演示；右侧滑块可实时调夸张程度和手感，“复制 JSON”可以把参数发出来。
+- 键盘或手机都能玩（页面右上角“启用手机连接”）。卡通版也可以用 `cartoon/index.html?engine=v2` 换成新引擎。
+
+测试：
+
+```bash
+for t in tests/engine_physics.mjs tests/engine_shot.mjs tests/engine_move.mjs tests/engine_core.mjs tests/engine_compete.mjs; do node "$t" || echo "FAIL $t"; done
+```
+
 ## 已知限制
 
 - 挥拍识别的阈值是用合成传感器数据调的，换到真机上的准确率还没验证过，建议先做手柄里的“挥拍校准”。

@@ -93,7 +93,7 @@ check('speeds near the table (topspin ~110, flat ~135, slice ~85 km/h)', Math.ab
 {   // lob
   const pos = { x: 0, y: 1, z: HALF }, power = 0.6;
   const el = 60 * Math.PI / 180 + (30 - 60) * Math.PI / 180 * power;
-  const sol = solveLaunch({ pos, target: { x: 0, z: -(HALF - lerpLob(power)) }, speed: 20, top: 1500 * RPM, surface: 'hard', elevation: el, tune: TUNE });
+  const sol = solveLaunch({ pos, target: { x: 0, z: -(HALF - lerpLob(power)) }, speed: 20, top: 1000 * RPM, surface: 'hard', elevation: el, tune: TUNE });
   const m = measure(sol, pos);
   let apex = 0, hNet = 0;
   for (let i = 1; i < m.r.path.length; i++) { const q = m.r.path[i]; apex = Math.max(apex, q.y); if (Math.abs(q.z - 2.6) < 0.3) hNet = Math.max(hNet, q.y); }

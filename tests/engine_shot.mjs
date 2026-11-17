@@ -191,6 +191,26 @@ console.log('--- timing -> target x is symmetric in effect (aimPreview, 95 km/h 
   const g = go(0, 0.2, 100, { seed: 11 }).h, g2 = go(0, 0.2, 0, { seed: 11 }).h;
   check('a +100 ms late swing is a clean hit with the same direction the preview promised (+-0.7 m)', g && g.timing !== 'wide' && g.mishit !== 'frame' && Math.abs(g.target.x - rows['middle fh'].out[TS.indexOf(100)].x) < 0.7, g ? `${g.timing}, target ${f2(g.target.x)}, q ${f2(g.quality)}` : 'no hit');
 }
+console.log('--- first-bounce apex of rally shots (solver-simulated apex of the ball centre after the first bounce, AI vs AI, all styles, level 0.6)');
+{
+  const by = {}, all = [];
+  const styles = ['baseliner', 'attacker', 'netrusher', 'trickster'];
+  for (let m = 0; m < 8; m++) {
+    const sim = new ArcadeSim({ seed: 400 + m, timeScale: 0.8, format: { sets: 1, gamesPerSet: 2, tiebreak: true }, players: [{ human: false, ai: { level: 0.6, style: styles[m % 4] } }, { human: false, hand: m % 2 ? 'L' : 'R', ai: { level: 0.6, style: styles[(m + 1) % 4] } }] });
+    let g = 0;
+    while (sim.phase !== 'match-over' && g++ < 60 * 1500) {
+      sim.step(1 / 60);
+      for (const e of sim.drainEvents()) if (e.type === 'hit' && !e.serve && e.bounceApex != null && e.bounceApex > 0.1) { (by[e.shot] = by[e.shot] || []).push(e.bounceApex); all.push(e.bounceApex); }
+    }
+  }
+  const pc = (a, q) => { const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(q * s.length))]; };
+  const row = (n, a) => `  ${n.padEnd(8)} n=${String(a.length).padStart(4)}  p10 ${f2(pc(a, 0.1))}  p50 ${f2(pc(a, 0.5))}  p90 ${f2(pc(a, 0.9))}  p95 ${f2(pc(a, 0.95))}  max ${f2(Math.max(...a))}`;
+  console.log(row('all', all)); for (const [k, a] of Object.entries(by)) if (a.length > 8) console.log(row(k, a));
+  check('bounce apex p50 in 1.1-1.6 m, p95 <= 2.2 m', pc(all, 0.5) >= 1.1 && pc(all, 0.5) <= 1.6 && pc(all, 0.95) <= 2.2, `p50 ${f2(pc(all, 0.5))}, p95 ${f2(pc(all, 0.95))}`);
+  check('topspin keeps a clear contrast with slice (median apex higher)', pc(by.topspin, 0.5) > pc(by.slice || [0], 0.5) + 0.3);
+  const nl = Object.entries(by).filter(([k]) => k !== 'lob').flatMap(([, a]) => a);
+  check('no groundstroke bounce above 2.3 m; lobs / moonballs <= 2.4 m', Math.max(...nl) <= 2.3 && Math.max(...(by.lob || [0])) <= 2.4, `${f2(Math.max(...nl))} / ${f2(Math.max(...(by.lob || [0])))}`);
+}
 console.log('--- hint.side / plan');
 {
   const sim = mkSim({ seed: 3, timeScale: 1 });

@@ -173,7 +173,7 @@ export class AIBrain {
 
 /** Level -> behaviour mapping (calibrated by tests/arcade_compete.mjs). */
 export const AI_TUNE = {
-  sigmaMin: 0.014, sigmaRange: 0.090, sigmaExp: 1.6,
+  sigmaMin: 0.026, sigmaRange: 0.090, sigmaExp: 1.6,
   tacticLo: 0.90, tacticHi: 1.0,
   aimLo: 0.70, aimHi: 1.0,
   reactLo: 0.15, reactHi: 0.05,

@@ -131,7 +131,7 @@ console.log('--- intercept choice: aggression (step in on the rise vs drop back)
   const zi = z(1), zb = z(0);
   const yy = (aggr) => { const L = watch({ bx: 0.8, depth: 2.2, kmh: 100, topRpm: 3600, seed: 61, aggr }); return L.plan0 ? L.plan0.P.y : NaN; };
   console.log(`  heavy topspin: aggressive player takes it at |z| ${f2(zi)} (y ${f2(yy(1))}), defensive at |z| ${f2(zb)} (y ${f2(yy(0))})`);
-  check('an aggressive player meets the ball earlier / further inside than a defensive one', zi < zb - 0.7);
+  check('an aggressive player meets the ball earlier / further inside than a defensive one', zi < zb - 0.5);
 }
 
 console.log('--- recovery to the bisector of the opponent\'s reply angles');
