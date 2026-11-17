@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>网球物理实验室</title>
+<link rel="stylesheet" href="css/lab.css">
+<script type="importmap">{"imports":{"three":"../vendor/three/three.module.min.js"}}</script>
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<div id="bar">
+  <b>物理实验室</b>
+  <span id="engineTag" class="tag">引擎…</span>
+  <span class="sep"></span>
+  <span class="grp" id="modeBtns">
+    <button data-mode="rally">对打</button><button data-mode="machine">发球机</button><button data-mode="demo">击球演示</button>
+  </span>
+  <span class="sep"></span>
+  <span class="grp" id="camBtns">
+    <button data-cam="behind" title="1">1 底线</button><button data-cam="side" title="2">2 侧面</button><button data-cam="top" title="3">3 俯视</button><button data-cam="orbit" title="4">4 自由</button>
+  </span>
+  <span class="sep"></span>
+  <label>场地 <select id="surface"><option value="hard">硬地</option><option value="clay">红土</option><option value="grass">草地</option></select></label>
+  <button id="btnSlow" title="慢动作">慢动作 0.25x</button>
+  <button id="btnPause">暂停 (P)</button>
+  <button id="btnRestart">重开</button>
+</div>
+
+<div id="left" class="col">
+  <section class="card" id="sideBox">
+    <div id="sideBig" class="side-big none">—</div>
+    <div id="sideLock" class="muted">无来球</div>
+  </section>
+  <section class="card">
+    <h3>上一拍 <span id="rdWho" class="muted"></span></h3>
+    <div id="readout" class="grid2"></div>
+  </section>
+  <section class="card">
+    <h3>统计</h3>
+    <div id="stats" class="grid2"></div>
+  </section>
+  <section class="card">
+    <h3>叠加显示</h3>
+    <div id="overlays" class="checks"></div>
+  </section>
+  <section class="card">
+    <h3>模式设置</h3>
+    <div id="modePanel"></div>
+  </section>
+</div>
+
+<div id="right" class="col">
+  <details class="card" id="phoneBox" open>
+    <summary>手机当球拍</summary>
+    <div id="phoneBody">
+      <button id="btnPhone">启用手机连接</button>
+      <div id="phoneInfo" class="muted"></div>
+      <canvas id="qr" width="10" height="10"></canvas>
+      <div id="phoneUrl" class="muted small"></div>
+    </div>
+  </details>
+  <details class="card" id="tuneBox" open>
+    <summary>引擎调参</summary>
+    <div class="tune-actions"><button id="btnReset">重置默认</button><button id="btnCopy">复制 JSON</button><span id="copyMsg" class="muted"></span></div>
+    <div id="tuning"></div>
+  </details>
+</div>
+
+<div id="miniWrap" class="card"><canvas id="mini" width="170" height="320"></canvas><div class="muted small" id="miniLegend"></div></div>
+<div id="toast"></div>
+<div id="keys" class="muted small">空格/J 上旋 · K 平击 · L 切削 · I 挑高 · W 上网 · P 暂停 · 1-4 视角 · 拖动旋转 · 滚轮缩放</div>
+
+<script type="module" src="src/lab/main.js"></script>
+</body>
+</html>

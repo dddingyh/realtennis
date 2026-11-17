@@ -1,10 +1,10 @@
 // ArcadeSim: DOM-free arcade tennis simulation (see docs/ARCADE.md sections 2 and 3, and "SIM notes" at its end).
 // Swing timing decides direction; players run automatically; the AI plays by the same rules.
 import { COURT, PHYSICS, SURFACES } from '../../../src/config.js';
-import { stepBall, simulateTrajectory, createBall } from '../../../src/physics/ball.js';
+import { stepBall, simulateTrajectory, createBall, topspinOf } from './flight.js';
 import { Match } from '../../../src/game/match.js';
 import { RNG } from '../../../src/game/rng.js';
-import * as K from './tuning.js';
+import { makeK, applyTuning } from './tuning.js';
 import { STROKES, DROP_POWER, LOB_EL, strokeParams, solveLaunch, scatterLaunch, inCourt, inServiceBox, clamp, lerp } from './shot.js';
 import { AIBrain } from './ai.js';
 
@@ -12,6 +12,8 @@ const G = PHYSICS.gravity;
 const H = 1 / PHYSICS.simHz;           // logic step (s)
 const HALF = COURT.halfLength;
 const KMH = 3.6;
+const RPM_ = Math.PI / 30;
+const EMPTY_PRED = { path: [], landing: null, contact: null };
 const sgn = (x) => (x < 0 ? -1 : 1);
 const FOLLOW = 0.38;                   // follow-through duration (s)
 const PLAN_DT = 1 / 240;
@@ -25,14 +27,16 @@ function mkAnim() {
   };
 }
 
-export class ArcadeSim {
+export class ArcadeSim2 {
   constructor(opts = {}) {
     this.surface = opts.surface || 'hard';
     this.surf = SURFACES[this.surface];
-    this.timeScale = opts.timeScale ?? 0.8;
+    this.K = makeK(opts.tuning || {});
+    this.ft = { liftGain: this.K.liftGain, kickGain: this.K.kickGain, skidGain: this.K.skidGain, sideKick: this.K.sideKick };   // flight gains (live)
+    this.timeScale = opts.timeScale ?? this.K.timeScale ?? 0.8;
     this.seed = opts.seed ?? 1;
     this.rng = new RNG(this.seed);
-    this.timing = { ...K.TIMING, ...(opts.timing || {}) };
+    this.timing = { ...this.K.TIMING, ...(opts.timing || {}) };
     this.time = 0;
     this.paused = false;
     this._acc = 0;
@@ -40,7 +44,8 @@ export class ArcadeSim {
     this.match = new Match(opts.format || {}, opts.firstServer ?? 0);
     this.b = createBall({ pos: { x: 0, y: 1, z: 0 } });
     this._hist = { n: 0, head: 0, t: new Float64Array(128), d: new Float64Array(128 * 6) };
-    this._env = { surf: this.surf, surfKey: this.surface, rng: this.rng, events: [] };
+    this._env = { surf: this.surf, surfKey: this.surface, rng: this.rng, events: [], tune: this.ft };
+    this.lab = false;
     this.rl = { live: false, hitter: 0, serve: false, shots: 0, lastHitTime: 0, cord: false, valid: false, firstBounce: false, crossed: false };
     this.sv = { stage: 'wait' };
     this.faultCount = 0;
@@ -71,12 +76,12 @@ export class ArcadeSim {
     const hand = c.hand === 'L' ? 'L' : 'R';
     return {
       i, facing, hand, handX: (hand === 'R' ? 1 : -1) * facing, human: !!c.human, name: c.name || (c.human ? '你' : 'AI'), look: c.look,
-      pos: { x: 0, z: facing * BASE_Z() }, vel: { x: 0, z: 0 }, y: 0, vy: 0,
+      pos: { x: 0, z: facing * this.K.BASE_Z }, vel: { x: 0, z: 0 }, y: 0, vy: 0,
       zone: 'base', wantNet: false, deep: false, stamina: 1, set: 1,
       lagMs: c.lagMs !== undefined ? clamp(c.lagMs, 0, 200) : (c.remote ? 90 : 0), lagInit: c.lagMs !== undefined || !!c.remote,
-      plan: null, recover: { x: 0, z: facing * BASE_Z() }, reactUntil: 0, splitUntil: 0,
+      plan: null, recover: { x: 0, z: facing * this.K.BASE_Z }, reactUntil: 0, splitUntil: 0,
       sw: null, cooldown: 0, walkTo: null, hold: null,
-      reaction: K.HUMAN_REACTION, perceive: 0.25,
+      reaction: this.K.HUMAN_REACTION, perceive: 0.25,
       faceAng: Math.atan2(0, -facing * 0 - facing) , gait: 0, dirv: { x: 0, z: -facing }, prevSpeed: 0, accel: 0,
       anim: mkAnim(), lastQ: 1, lastSet: 1, netThisPoint: false, approachThisPoint: false, serveAnim: null,
     };
@@ -102,6 +107,7 @@ export class ArcadeSim {
   }
 
   // ------------------------------------------------------------------ public API
+
   pause(v = true) { this.paused = !!v; }
   drainEvents() { const e = this.events; this.events = []; return e; }
   emit(e) { this.events.push(e); }
@@ -125,19 +131,69 @@ export class ArcadeSim {
     this._sync();
   }
 
-  /** Timing offset (ms, sim time; negative = early) that sends the next ball of player i toward world x = aimX. */
-  timingForAim(i, aimX) {
-    const p = this.P[i];
-    const plan = p.plan;
-    const side = plan ? plan.side : 'fh';
-    const s = (side === 'fh' ? 1 : -1) * p.handX;
-    return K.xToAim(clamp(aimX, -K.AIM_X, K.AIM_X)) * s * K.T_FULL * 1000;
+  // ------------------------------------------------------------------ engine v2 API (ENGINE2 section 1)
+  /** Live tuning (lab sliders): flat keys of tuning.js (nested objects merged), physics gains (liftGain, kickGain, skidGain, sideKick, ...) and timeScale. */
+  setTuning(t = {}) {
+    applyTuning(this.K, t);
+    const K = this.K, f = this.ft;
+    f.liftGain = K.liftGain; f.kickGain = K.kickGain; f.skidGain = K.skidGain; f.sideKick = K.sideKick;
+    if (t.timeScale !== undefined) this.timeScale = clamp(+t.timeScale || 0.8, 0.1, 3);
+    this.K.timeScale = this.timeScale;
+    for (const br of this.brains) if (br) br.configure(this);
   }
+  getTuning() { const o = {}; for (const [k, v] of Object.entries(this.K)) if (typeof v !== 'function') o[k] = (v && typeof v === 'object') ? JSON.parse(JSON.stringify(v)) : v; o.timeScale = this.timeScale; return o; }
+
+  /** Context for the aim model of player i's next stroke: {side, C (contact point), loc (body frame), plan}. */
+  _aimCtx(p) {
+    const plan = p.plan && !p.plan.expired ? p.plan : null;
+    const side = plan ? plan.side : 'fh';
+    if (plan) {
+      const C = plan.P, loc = this._local(p, side, plan.stand, C);
+      return { side, C, loc, plan };
+    }
+    const hs = this._hs(p, side), K = this.K;
+    const C = { x: p.pos.x + hs * K.IDEAL_LAT[side], y: 1.0, z: p.pos.z - p.facing * K.IDEAL_FWD };
+    return { side, C, loc: { fwd: K.IDEAL_FWD, lat: K.IDEAL_LAT[side], h: 1.0 }, plan: null };
+  }
+  /** Timing offset (ms, sim time; negative = early) that sends the next ball of player i toward world x = aimX
+   *  (depth line `depthZ` = |z| of the landing, default 2.2 m inside the baseline). Uses the planned contact point: geometry matters. */
+  timingForAim(i, aimX, depthZ) {
+    const p = this.P[i], ctx = this._aimCtx(p);
+    const tz = -p.facing * (depthZ ?? (HALF - 2.2));
+    const psi = clamp(this._psiForTarget(p, ctx.side, ctx.C, aimX, tz), -this.K.PSI_MAX, this.K.PSI_MAX);
+    return this._timingForPsi(ctx.side, ctx.loc, psi) * 1000;
+  }
+  /** Where a swing with timing offset tOffsetMs would aim for the current plan (no side effects). */
+  aimPreview(i, tOffsetMs = 0, o = {}) {
+    const p = this.P[i], K = this.K, ctx = this._aimCtx(p);
+    if (!ctx.plan && !(this.phase === 'rally')) return null;
+    const parts = this._psiParts(ctx.side, ctx.loc, tOffsetMs / 1000);
+    const tz = -p.facing * (o.depthZ ?? (HALF - 2.2));
+    const tg = this._targetFromPsi(p, ctx.side, ctx.C, parts.psi, tz);
+    const kindKey = o.shot === 'slice' ? 'slice' : o.shot === 'lob' ? 'lob' : o.shot === 'flat' ? 'flat' : 'topspin';
+    const sw = this._sideSpin(p, kindKey, parts.psi, o.power ?? 0.6);
+    const bendSign = sw === 0 ? 0 : (sw * -p.facing > 0 ? -1 : 1) * -1;      // world x sign of the bend (wy = -bs * facing * mag)
+    return { x: tg.x, z: tz, psi: parts.psi, psiT: parts.psiT, psiF: parts.psiF, psiL: parts.psiL, side: ctx.side, curveSign: -Math.sign(sw) * p.facing, sideRpm: sw / RPM_,
+      inCourt: inCourt(tg.x, tz), contact: { x: ctx.C.x, y: ctx.C.y, z: ctx.C.z } };
+  }
+  /** Prediction of the ball coming to player i: {path:[{x,y,z,t}], landing, contact:{x,y,z,t,side,kind}|null}; cached per plan. */
+  predict(i) { const p = this.P[i]; return p.pred || EMPTY_PRED; }
+  /** Lab ball machine: launch from the far side {from:{x,z,y?}, target:{x,z}, kmh, topRpm, sideRpm, shot} into the human's half. No scoring. */
+  feed(o = {}) {
+    const shot = o.shot || 'topspin';
+    const def = { topspin: 2500, flat: 500, slice: -2200, lob: 1200 }[shot] ?? 2500;
+    this.lab = true;
+    const from = { x: o.from?.x ?? 0, y: o.from?.y ?? 1.0, z: o.from?.z ?? -12.4 };
+    const target = { x: o.target?.x ?? 0, z: o.target?.z ?? 9.5 };
+    const sol = this.debugFeed(1, { from, target, speedKmh: o.kmh ?? 100, topRpm: o.topRpm ?? def, sideRpm: o.sideRpm ?? 0, el: shot === 'lob' ? (o.el ?? 0.9) : o.el, clear: o.clear ?? 0.35, shots: 2 });
+    return { landing: sol.landing, netClear: sol.netClear, curveM: sol.curveM, speedKmh: sol.speed * KMH, ok: sol.ok };
+  }
+
   /** Serve: timing offset (ms from the apex) for a target x in the receiving box. */
   serveTimingForAim(i, x) {
     const box = this._serveGeom(this.P[i]);
     const aim = clamp((x - box.cx) / box.half, -1, 1);
-    return aim * p_handX(this.P[i]) * K.T_FULL * 1000;
+    return aim * p_handX(this.P[i]) * this.K.T_FULL * 1000;
   }
 
 
@@ -154,7 +210,7 @@ export class ArcadeSim {
     const p = this.P[hitter], f = p.facing;
     const from = o.from || { x: p.pos.x, y: o.y ?? 1.0, z: f * 12.4 };
     const target = o.target || { x: 0, z: -f * (HALF - 2) };
-    const spec = { pos: from, target, speed: (o.speedKmh ?? 100) / KMH, top: (o.topRpm ?? 2500) * Math.PI / 30, surface: this.surface, clear: o.clear ?? 0.4 };
+    const spec = { pos: from, target, speed: (o.speedKmh ?? 100) / KMH, top: (o.topRpm ?? 2500) * Math.PI / 30, side: (o.sideRpm ?? 0) * Math.PI / 30, surface: this.surface, clear: o.clear ?? 0.4, tune: this.ft };
     if (o.el !== undefined) spec.elevation = o.el;
     const sol = solveLaunch(spec);
     for (const q of this.P) { q.plan = null; q.sw = null; q.cooldown = 0; q.walkTo = null; q.hold = null; }
@@ -166,7 +222,7 @@ export class ArcadeSim {
     b.bounces = 0; b.rolling = false; b.netHit = false;
     this.rl = { live: true, hitter, serve: false, shots: o.shots ?? 2, lastHitTime: this.time, cord: false, valid: false, firstBounce: false, crossed: false, returned: true, boxSign: 0, recvInfeasible: false };
     this._pushHist();
-    this._afterHit(p, target);
+    this._afterHit(p, sol.landing || target);
     return sol;
   }
 
@@ -187,7 +243,7 @@ export class ArcadeSim {
     const plan = p.plan;
     const power = clamp(o.power ?? 0.6, 0, 1);
     const req = (o.shot === 'topspin' || o.shot === 'flat' || o.shot === 'slice' || o.shot === 'lob') ? o.shot : 'topspin';
-    const win = src === 'remote' ? K.REMOTE : { T_MISS: K.T_MISS, T_PERFECT: K.T_PERFECT };
+    const win = src === 'remote' ? this.K.REMOTE : { T_MISS: this.K.T_MISS, T_PERFECT: this.K.T_PERFECT };
     if (!plan || plan.swing || plan.expired) { this._airSwing(p, req, 'noball'); return true; }
     const t = ts - (plan.tContact - lagUsed);       // ideal swing moment = natural contact - latency
     if (t < -win.T_MISS || t > win.T_MISS) { this._airSwing(p, req, t < 0 ? 'early' : 'late'); return true; }
@@ -220,7 +276,7 @@ export class ArcadeSim {
     p.wantNet = v;
     const z = Math.abs(p.pos.z);
     if (v) {
-      if (p.zone === 'base' || p.zone === 'toBase') { this._zone(p, 'toNet'); if (this.phase === 'rally' || this.phase === 'serving') { this._noteApproach(p); p.stamina = clamp(p.stamina - K.STAMINA.rush, 0, 1); } }
+      if (p.zone === 'base' || p.zone === 'toBase') { this._zone(p, 'toNet'); if (this.phase === 'rally' || this.phase === 'serving') { this._noteApproach(p); p.stamina = clamp(p.stamina - this.K.STAMINA.rush, 0, 1); } }
     } else if (p.zone === 'net' || p.zone === 'toNet') this._zone(p, 'toBase');
     p.recover = this._home(p);
     if (z > 99) p.recover = this._home(p);
@@ -239,9 +295,9 @@ export class ArcadeSim {
     const opp = this.P[1 - p.i];
     const f = p.facing;
     if (p.zone === 'net' || p.zone === 'toNet') {
-      return { x: clamp((landing ? landing.x : opp.pos.x) * 0.4, -1.7, 1.7), z: f * K.NET_Z };
+      return { x: clamp((landing ? landing.x : opp.pos.x) * 0.4, -1.7, 1.7), z: f * this.K.NET_Z };
     }
-    const deep = p.deep ? K.BACK_Z : K.BASE_Z;
+    const deep = p.deep ? this.K.BACK_Z : this.K.BASE_Z;
     const lx = landing ? landing.x : opp.pos.x;
     return { x: clamp(lx * 0.22, -1.3, 1.3), z: f * deep };
   }
@@ -301,6 +357,7 @@ export class ArcadeSim {
     for (const p of this.P) {
       const pl = p.plan;
       if (pl) {
+        if (!pl.sideLocked && this.time >= pl.tContact - this.K.LOCK_TIME) { pl.sideLocked = true; pl.pub.sideLocked = true; }
         if (!pl.snap && this.time >= pl.tContact) this._snapPlan(p);
         if (pl.swing && !pl.resolved && this.time >= pl.tContact - 1e-9) this._resolve(p);
         else if (!pl.swing && this.time > pl.tContact + 0.32) { pl.expired = true; p.plan = null; p.recover = this._home(p); }
@@ -447,8 +504,8 @@ export class ArcadeSim {
   _tossPoint(srv, u) {
     const e = 1 - (1 - u) * (1 - u);
     const x = srv.pos.x - srv.handX * 0.22;
-    const z = srv.pos.z - srv.facing * K.SERVE.releaseFwd;
-    this.b.pos.x = x; this.b.pos.z = z; this.b.pos.y = lerp(0.95, K.SERVE.releaseY, e);
+    const z = srv.pos.z - srv.facing * this.K.SERVE.releaseFwd;
+    this.b.pos.x = x; this.b.pos.z = z; this.b.pos.y = lerp(0.95, this.K.SERVE.releaseY, e);
   }
 
   _pointFromError(loser, reason) {
@@ -478,6 +535,12 @@ export class ArcadeSim {
 
   _endPoint(winner, reason, cls) {
     if (this.phase !== 'rally' && this.phase !== 'serving') return;
+    if (this.lab) {                                        // lab ball machine: the point ends without scoring
+      this.emit({ type: 'point', winner: null, reason, shots: this.rl.shots, cls, lab: true, by: winner });
+      this.rl.live = false;
+      for (const p of this.P) p.plan = null;
+      return;
+    }
     const m = this.match, rl = this.rl, S = this.stats;
     const loserIdx = 1 - winner;
     S.points[winner]++;
@@ -542,7 +605,7 @@ export class ArcadeSim {
     const sv = this.sv, srv = this.P[this.match.server], b = this.b;
     if (sv.stage === 'wait') { this._tossPoint(srv, 0); return; }
     if (sv.stage === 'raise') {
-      const u = clamp((this.time - sv.t0) / K.SERVE.raise, 0, 1);
+      const u = clamp((this.time - sv.t0) / this.K.SERVE.raise, 0, 1);
       this._tossPoint(srv, u);
       if (u >= 1) {
         sv.stage = 'flight';
@@ -554,9 +617,9 @@ export class ArcadeSim {
     if (sv.stage === 'flight') {
       const tau = this.time - sv.tRel;
       b.pos.x = sv.x0 + sv.vx * tau; b.pos.z = sv.z0 + sv.vz * tau;
-      b.pos.y = K.SERVE.releaseY + sv.vy0 * tau - 0.5 * G * tau * tau;
+      b.pos.y = this.K.SERVE.releaseY + sv.vy0 * tau - 0.5 * G * tau * tau;
       b.vel.y = sv.vy0 - G * tau; b.vel.x = sv.vx; b.vel.z = sv.vz;
-      if (this.time > sv.tIdeal + K.SERVE.catchAfter) {
+      if (this.time > sv.tIdeal + this.K.SERVE.catchAfter) {
         // toss wasted: catch it, re-toss without penalty
         this.sv = { stage: 'wait' };
         srv.serveJump = null; srv.y = 0; srv.walkTo = this._servePositions().srv;
@@ -574,10 +637,10 @@ export class ArcadeSim {
     const sv = this.sv;
     if (sv.stage === 'wait') {
       sv.stage = 'raise'; sv.t0 = this.time;
-      sv.tRel = this.time + K.SERVE.raise;
-      sv.vy0 = Math.sqrt(2 * G * (K.SERVE.apexY - K.SERVE.releaseY));
+      sv.tRel = this.time + this.K.SERVE.raise;
+      sv.vy0 = Math.sqrt(2 * G * (this.K.SERVE.apexY - this.K.SERVE.releaseY));
       sv.tApex = sv.tRel + sv.vy0 / G;
-      const J = K.SERVE;
+      const J = this.K.SERVE;
       // ideal contact: slightly after the apex on the way down, at J.contactY (reachable with the jump)
       sv.tIdeal = sv.tApex + Math.sqrt(2 * (J.apexY - J.contactY) / G);
       sv.jumpT0 = sv.tIdeal - J.jumpLead;
@@ -597,23 +660,23 @@ export class ArcadeSim {
   }
 
   /** forward step (m, toward the net) of the server during the serve jump, tau seconds after take-off */
-  _serveStep(tau) { const u = clamp(tau / K.SERVE.stepTime, 0, 1); return K.SERVE.stepIn * u * u * (3 - 2 * u); }
+  _serveStep(tau) { const u = clamp(tau / this.K.SERVE.stepTime, 0, 1); return this.K.SERVE.stepIn * u * u * (3 - 2 * u); }
   _serveJumpY(tau) {
-    const L = K.SERVE.jumpLead, v = (K.SERVE.jumpY + 0.5 * G * L * L) / L;
+    const L = this.K.SERVE.jumpLead, v = (this.K.SERVE.jumpY + 0.5 * G * L * L) / L;
     return tau <= 0 ? 0 : Math.max(0, v * tau - 0.5 * G * tau * tau);
   }
 
   _serveHit(p, o, ts, src) {
     const sv = this.sv, m = this.match;
     const first = this.faultCount === 0;
-    const win = src === 'remote' ? K.REMOTE : { T_MISS: K.T_MISS, T_PERFECT: K.T_PERFECT };
+    const win = src === 'remote' ? this.K.REMOTE : { T_MISS: this.K.T_MISS, T_PERFECT: this.K.T_PERFECT };
     const t = ts - (sv.tIdeal - this._lagUsed);
     const power = clamp(o.power ?? 0.75, 0, 1);
     const g = this._serveGeom(p);
     const stats = this.stats;
     if (first) { stats.firstServes[p.i]++; }
     const tau = this.time - sv.tRel;          // the ball is hit where it really is now (timing was judged at ts): no teleport
-    const pos = { x: sv.x0 + sv.vx * tau, y: K.SERVE.releaseY + sv.vy0 * tau - 0.5 * G * tau * tau, z: sv.z0 + sv.vz * tau };
+    const pos = { x: sv.x0 + sv.vx * tau, y: this.K.SERVE.releaseY + sv.vy0 * tau - 0.5 * G * tau * tau, z: sv.z0 + sv.vz * tau };
     const now = this.time;
     p.serveAnim.hit = ts;
     // air ball
@@ -629,15 +692,15 @@ export class ArcadeSim {
       return true;
     }
     const at = Math.abs(t);
-    const label = at <= win.T_PERFECT ? 'perfect' : at > K.T_FULL ? 'wide' : t < 0 ? 'early' : 'late';
-    const fT = at <= win.T_PERFECT ? 1 : Math.max(0.3, 1 - 0.62 * Math.pow((at - win.T_PERFECT) / (K.T_MISS - win.T_PERFECT), 1.1));
+    const label = at <= win.T_PERFECT ? 'perfect' : at > this.K.T_FULL ? 'wide' : t < 0 ? 'early' : 'late';
+    const fT = at <= win.T_PERFECT ? 1 : Math.max(0.3, 1 - 0.62 * Math.pow((at - win.T_PERFECT) / (this.K.T_MISS - win.T_PERFECT), 1.1));
     const stamF = 0.92 + 0.08 * p.stamina;
-    const dirT = clamp(t / K.T_FULL, -1.7, 1.7);
+    const dirT = clamp(t / this.K.T_FULL, -1.7, 1.7);
     const aim = dirT * p.handX;
     const aimC = clamp(aim, -1, 1);
     let tx = g.cx + aimC * g.half;
     if (Math.abs(aim) > 1) tx = g.cx + sgn(aim) * (g.half + (Math.abs(aim) - 1) * 3);
-    const fHs = 1 - 0.55 * clamp((Math.abs(pos.y - K.SERVE.contactY) - 0.25) / 0.6, 0, 1);   // contact more than 0.25 m off the ideal height: weak serve
+    const fHs = 1 - 0.55 * clamp((Math.abs(pos.y - this.K.SERVE.contactY) - 0.25) / 0.6, 0, 1);   // contact more than 0.25 m off the ideal height: weak serve
     const power1 = first ? power : Math.min(power, 0.62);
     const dm = first ? lerp(1.35, 0.55, power) : lerp(1.7, 1.15, power);
     const tz = g.side * (COURT.serviceLineDist - dm);
@@ -663,7 +726,7 @@ export class ArcadeSim {
       boxSign: g.boxSign, returned: false, recvInfeasible: false, first,
     };
     const spd = Math.hypot(sc.vel.x, sc.vel.y, sc.vel.z) * KMH;
-    const shot = { by: p.i, shot: first ? 'flat' : 'topspin', side: 'fh', timing: label, timingMs: Math.round(t * 1000), dir: clamp(t / K.T_FULL, -1, 1),
+    const shot = { by: p.i, shot: first ? 'flat' : 'topspin', side: 'fh', timing: label, timingMs: Math.round(t * 1000), dir: clamp(t / this.K.T_FULL, -1, 1),
       aim: clamp(aim, -1, 1), power, quality: q, setv: 1, speedKmh: spd, spinRpm: Math.abs(top) * 30 / Math.PI, target: { x: tx, z: tz }, mishit: label === 'wide' ? 'wide' : null, serve: true, first };
     this.lastShot = shot;
     p.lastQ = q;
@@ -684,13 +747,13 @@ export class ArcadeSim {
     opp.splitUntil = this.time + 0.16;
     opp.reactUntil = this.time + opp.reaction;
     if (landing && !rl.serve) {
-      const nm = p.zone === 'toNet' || p.zone === 'net' ? K.PRESSURE_NET : 1;      // pressure counts double behind a ball you follow to the net
+      const nm = p.zone === 'toNet' || p.zone === 'net' ? this.K.PRESSURE_NET : 1;      // pressure counts double behind a ball you follow to the net
       // a deep / wide / fast ball takes the opponent's time away (he reads it later and is stretched); a short soft one gives it back
       const speedK = this.lastShot ? this.lastShot.speedKmh : 100;
       const stretch = clamp(Math.abs(landing.x - opp.pos.x) / 3.2, 0, 1);
       const deep = clamp((2.6 - (HALF - Math.abs(landing.z))) / 2.6, 0, 1);
       const gp = 0.6 * stretch + 0.25 * deep + 0.15 * clamp((speedK - 95) / 45, 0, 1);
-      opp.reactUntil += K.PRESSURE_REACT * nm * (gp - 0.35);
+      opp.reactUntil += this.K.PRESSURE_REACT * nm * (gp - 0.35);
       opp.incomingGp = gp * nm;
     } else opp.incomingGp = 0;
     p.recover = this._home(p, landing);
@@ -710,9 +773,9 @@ export class ArcadeSim {
   }
 
   // ------------------------------------------------------------------ intercept planning
-  _vmaxOf(p) { return K.VMAX * (0.72 + 0.28 * p.stamina); }
+  _vmaxOf(p) { return this.K.VMAX * (0.72 + 0.28 * p.stamina); }
   _moveTime(p, d, tx, tz) {
-    const vm = this._vmaxOf(p), a = K.ACC, bdec = K.DEC;
+    const vm = this._vmaxOf(p), a = this.K.ACC, bdec = this.K.DEC;
     let t;
     const dEq = vm * vm * 0.5 * (1 / a + 1 / bdec);
     if (d < dEq) { const v = Math.sqrt(2 * d / (1 / a + 1 / bdec)); t = v / a + v / bdec; }
@@ -731,8 +794,8 @@ export class ArcadeSim {
     if (kind === 'smash') { x = P.x - p.handX * 0.15; z = P.z + f * 0.3; }
     else {
       const s = side === 'fh' ? 1 : -1;
-      x = P.x - s * p.handX * K.IDEAL_LAT[side];
-      z = P.z + f * K.IDEAL_FWD;
+      x = P.x - s * p.handX * this.K.IDEAL_LAT[side];
+      z = P.z + f * this.K.IDEAL_FWD;
     }
     x = clamp(x, -7, 7);
     const az = Math.max(0.9, Math.abs(z));
@@ -740,11 +803,13 @@ export class ArcadeSim {
   }
 
   _planFor(p, old) {
-    const b = this.b, rl = this.rl;
-    if (!rl.live || rl.hitter === p.i) { p.plan = null; return; }
-    const pred = simulateTrajectory(b, { surface: this.surface, dt: PLAN_DT, path: true, pathDt: 1 / 60, stopAfterBounces: 2, maxTime: 3.6 });
+    const b = this.b, rl = this.rl, K = this.K;
+    if (!rl.live || rl.hitter === p.i) { p.plan = null; p.pred = null; return; }
+    if (this.lab && p.i === 1) { p.plan = null; p.pred = null; return; }          // lab: the far side is only the ball machine
+    const pred = simulateTrajectory(b, { surface: this.surface, dt: PLAN_DT, path: true, pathDt: 1 / 60, stopAfterBounces: 2, maxTime: 3.6, tuning: this.ft });
     p.plan = null;
     p.lastPlanMargin = undefined;
+    p.pred = { path: pred.path, landing: pred.landing, contact: null };
     if (pred.hitNet) return;
     const f = p.facing;
     const b0 = b.bounces;
@@ -781,19 +846,30 @@ export class ArcadeSim {
     }
     if (!cands.length) return;
     const rtRemain = Math.max(0, p.reactUntil - tNow);
-    const evalCand = (c) => {
+    const fhBias = p.fhBias ?? 1, aggr = p.aggr ?? K.AGGRESSION;
+    const evalSide = (c, side) => {
       const P = { x: c.s.x, y: c.s.y, z: c.s.z };
-      let best = null;
-      const sides = c.kind === 'smash' ? ['fh'] : (old && old.kind !== 'smash' ? [old.side] : ['fh', 'bh']);
-      for (const side of sides) {
-        const stand = this._standFor(p, side, P, c.kind);
-        const dx = stand.x - p.pos.x, dz = stand.z - p.pos.z, d = Math.hypot(dx, dz);
-        const need = rtRemain + this._moveTime(p, d, dx, dz) + K.SETUP_TIME;
-        const margin = (c.t - tNow) - need;
-        const sc = d + (side === 'fh' ? 0 : 0.25);
-        if (!best || sc < best.sc) best = { side, stand, d, margin, sc, P };
+      const stand = this._standFor(p, side, P, c.kind);
+      const dx = stand.x - p.pos.x, dz = stand.z - p.pos.z, d = Math.hypot(dx, dz);
+      const need = rtRemain + this._moveTime(p, d, dx, dz) + K.SETUP_TIME;
+      return { side, stand, d, margin: (c.t - tNow) - need, P };
+    };
+    const lockedSide = old && old.sideLocked && old.kind !== 'smash' ? old.side : null;
+    // side choice (ENGINE2 section 4): the shorter, more comfortable move wins, ties toward the forehand; a ball close on the
+    // backhand side is run around when there is time (inside-out / inside-in); before the lock the old side is kept unless infeasible.
+    const evalCand = (c) => {
+      if (c.kind === 'smash') return evalSide(c, 'fh');
+      if (lockedSide) return evalSide(c, lockedSide);
+      const eF = evalSide(c, 'fh'), eB = evalSide(c, 'bh');
+      const cost = (e) => e.d - (e.side === 'fh' ? K.FH_PREF * fhBias : 0);
+      let pick = cost(eF) <= cost(eB) ? eF : eB;
+      const latBall = (c.s.x - p.pos.x) * p.handX;                      // + = ball on my forehand side
+      if (pick === eB && latBall < 0 && latBall > -K.RUN_AROUND * fhBias && eF.margin >= K.RUN_SPARE) pick = eF;
+      if (old && old.kind !== 'smash') {
+        const eo = old.side === 'fh' ? eF : eB, en = old.side === 'fh' ? eB : eF;
+        if (eo.margin >= -0.04 && cost(eo) - cost(en) < 0.7) pick = eo;
       }
-      return best;
+      return pick;
     };
     let chosen = null;
     // sticky: keep the old contact time if still feasible
@@ -823,11 +899,18 @@ export class ArcadeSim {
       }
     }
     if (!chosen) {
-      for (const pass of [0.12, 0.0]) {
+      // intercept choice: among the reachable contact points take the most comfortable one (height 0.8-1.25 m), at the preferred
+      // depth for this player's aggression (on the rise inside the baseline vs dropping back), with enough time to settle
+      const zPref = lerp(K.Z_BACK, K.Z_FRONT, aggr);
+      for (const pass of [K.MARGIN_MIN, 0.0]) {
+        let bs = -1e9;
         for (const c of cands) {
           if (c.comfort < 1 && pass > 0) continue;
           const e = evalCand(c);
-          if (e.margin >= pass + (c.kind === 'volley' && pass > 0 ? 0.2 : 0)) { chosen = { c, e }; break; }
+          if (e.margin < pass + (c.kind === 'volley' && pass > 0 ? 0.2 : 0)) continue;
+          const y = c.s.y, hdev = Math.max(0, 0.8 - y, y - 1.25);
+          const sc = -3 * hdev - 0.22 * Math.abs(Math.abs(c.s.z) - zPref) + Math.min(e.margin, 0.35) - (c.comfort < 1 ? 0.5 : 0);
+          if (sc > bs) { bs = sc; chosen = { c, e }; }
         }
         if (chosen) break;
       }
@@ -849,12 +932,14 @@ export class ArcadeSim {
       ? { x: e.stand.x + this.rng.gauss(0, sig * 0.5), z: e.stand.z + this.rng.gauss(0, sig * 0.7) }
       : e.stand;
     if (noisy) { stand.z = f * Math.max(0.9, Math.abs(stand.z)); }
+    const locked = !!(old && (old.sideLocked || old.side === e.side));
     p.plan = {
-      tContact: c.t, P: e.P, vel: { x: c.s.vx, y: c.s.vy, z: c.s.vz }, side: e.side, kind: c.kind, bounces: c.s.b - b0 + 0, pre: c.s.b === b0,
+      tContact: c.t, P: e.P, vel: { x: c.s.vx, y: c.s.vy, z: c.s.vz }, side: e.side, kind: c.kind, bounces: c.s.b === b0 && b0 === 0 ? 0 : 1, pre: c.s.b === b0,
       stand, standTrue: e.stand, margin: e.margin, inSpeed: Math.hypot(c.s.vx, c.s.vy, c.s.vz),
-      swing: null, resolved: false, snap: null, expired: false, id: ++this._planId,
+      swing: null, resolved: false, snap: null, expired: false, id: ++this._planId, sideLocked: locked, pub: null,
     };
-    p.plan.bounces = c.s.b === b0 && b0 === 0 ? 0 : 1;
+    p.plan.pub = { side: e.side, sideLocked: locked, kind: c.kind, tContact: c.t, contact: { x: e.P.x, y: e.P.y, z: e.P.z } };
+    p.pred.contact = { x: e.P.x, y: e.P.y, z: e.P.z, t: c.s.t, side: e.side, kind: c.kind };
     p.lastPlanMargin = e.margin;
     if (rl.serve && !rl.returned) rl.recvInfeasible = e.margin < 0;
   }
@@ -865,7 +950,51 @@ export class ArcadeSim {
     return { lat: s * (bp.x - snapPos.x) * p.handX, fwd: (bp.z - snapPos.z) * -p.facing, h: bp.y };
   }
 
+  // ------------------------------------------------------------------ contact point -> face angle -> direction (ENGINE2 section 3.2)
+  /** World x sign of the stroke's hitting side (fh: racket-arm side; bh: the other side). */
+  _hs(p, side) { return (side === 'fh' ? 1 : -1) * p.handX; }
+  /** Face yaw parts (deg, + = pulled across the body) from timing t (s), and the contact in the body frame loc {fwd, lat}. */
+  _psiParts(side, loc, t, cache = {}) {
+    const K = this.K;
+    const psiT = K.G_T * clamp(-t / K.T_FULL, -K.PSI_T_CLAMP, K.PSI_T_CLAMP);
+    const psiF = K.G_F * (loc.fwd - K.IDEAL_FWD);
+    const psiL = K.G_L * (loc.lat - K.IDEAL_LAT[side]);
+    cache.psiT = psiT; cache.psiF = psiF; cache.psiL = psiL;
+    cache.psi = clamp(psiT + psiF + psiL, -K.PSI_MAX, K.PSI_MAX);
+    return cache;
+  }
+  /** Where the ray from contact point C at face yaw psi (deg) meets the depth line z = tz. */
+  _targetFromPsi(p, side, C, psi, tz) {
+    const a = psi * Math.PI / 180, hs = this._hs(p, side);
+    const dx = -hs * Math.sin(a), dz = -p.facing * Math.cos(a);
+    const s = Math.max(0.5, (tz - C.z) / dz);
+    return { x: C.x + dx * s, z: tz, dx, dz };
+  }
+  /** Inverse: face yaw (deg) that sends the ball from C toward (tx, tz). */
+  _psiForTarget(p, side, C, tx, tz) {
+    const hs = this._hs(p, side);
+    return Math.atan2(-hs * (tx - C.x), Math.max(0.3, -p.facing * (tz - C.z))) * 180 / Math.PI;
+  }
+  /** Timing offset (s) that gives face yaw `psi` at contact geometry `loc` (inverse of _psiParts). */
+  _timingForPsi(side, loc, psi) {
+    const K = this.K;
+    const psiT = psi - K.G_F * (loc.fwd - K.IDEAL_FWD) - K.G_L * (loc.lat - K.IDEAL_LAT[side]);
+    return -clamp(psiT / K.G_T, -K.PSI_T_CLAMP, K.PSI_T_CLAMP) * K.T_FULL;
+  }
+  /** Signed sidespin (rad/s about the vertical axis) for a stroke: topspin-like strokes hook toward the non-hitting side
+   *  (forehand) / hitting side (backhand) = world -handX; slice-like carve the other way (+handX). */
+  _sideSpin(p, kindKey, psi, power = 0.6) {
+    const K = this.K;
+    const base = K.SIDE_RPM[kindKey] || 0;
+    if (!base) return 0;
+    const mag = base * (K.SIDE_K0 + K.SIDE_K1 * Math.abs(psi) / 30) * K.sideScale * (0.6 + 0.4 * power) * RPM_;
+    const sliceLike = kindKey === 'slice' || kindKey === 'volley';
+    const bs = (sliceLike ? 1 : -1) * p.handX;                     // world x sign the ball bends toward (travelling toward the opponent)
+    return -bs * p.facing * mag;
+  }
+
   _resolve(p) {
+    const K = this.K;
     const plan = p.plan, sw = plan.swing;
     plan.resolved = true;
     // The ball is struck where it really is NOW (after an early swing was buffered, or a late / remote swing arrived);
@@ -874,11 +1003,12 @@ export class ArcadeSim {
     const tb = this.time;
     const B = this._ballAt(tb);
     const kind = this._kindFor(plan, sw.shot);
-    const loc = this._local(p, plan.side, snap.pos, B.pos);
+    const side = plan.side;
+    const loc = this._local(p, side, snap.pos, B.pos);
     const vfwd0 = snap.vel.z * -p.facing;                                       // + = running toward the net
     const spd = Math.hypot(snap.vel.x, snap.vel.z);
     const spdEff = Math.hypot(snap.vel.x, vfwd0 > 0 ? vfwd0 * 0.3 : vfwd0 * 1.3);   // stepping into the ball is cheap, backing off is not
-    const maxR = K.REACH[plan.side] + K.LUNGE * clamp(spd / 6, 0, 1);
+    const maxR = K.REACH[side] + K.LUNGE * clamp(spd / 6, 0, 1);
     const reachY = kind === 'smash' ? K.SMASH_Y : K.REACH_Y;
     p.sw.done = false;
     if (loc.lat > maxR + 0.12 || loc.lat < -0.45 || B.pos.y > reachY + 0.25 || loc.fwd < K.FWD_WHIFF || loc.fwd > 2.4) {
@@ -898,12 +1028,16 @@ export class ArcadeSim {
     const back = vf < -1.5 ? clamp((-vf - 1.5) / 2.5, 0, 1) * 0.6 : 0;
     const setv = clamp(1 - 0.5 * clamp(spdEff / (K.VMAX * 0.9), 0, 1) - 0.35 * clamp(rd / 1.1, 0, 1) - 0.5 * reachT - back, 0, 1);
     const vIn = Math.hypot(B.vel.x, B.vel.y, B.vel.z);
-    const fPace = clamp(1 - 0.014 * Math.max(0, vIn - 22), 0.55, 1);
+    const vInH = Math.hypot(B.vel.x, B.vel.z) + 1e-9;
+    const fPace = clamp(1 - (side === 'bh' ? K.PACE_PEN_BH : K.PACE_PEN_FH) * Math.max(0, vIn - 22), 0.55, 1);
     const y = B.pos.y;
     let fH = 1;
     const lo = kind === 'volley' ? 0.7 : 0.6, hi = kind === 'volley' ? 1.9 : kind === 'smash' ? 3.0 : 1.45;
     if (y < lo) fH = 1 - 0.4 * clamp((lo - y) / 0.4, 0, 1);
     else if (y > hi) fH = 1 - 0.3 * clamp((y - hi) / 1.0, 0, 1);
+    // heavy incoming topspin kick above the shoulder is hard to handle (slice / lob much less so)
+    const topIn = topspinOf(this.b.spin, B.vel.x / vInH, B.vel.z / vInH);
+    const fSpin = 1 - K.SPIN_IN_K * clamp(topIn / 300, 0, 1.2) * clamp((y - 1.2) / 0.7, 0, 1) * (sw.shot === 'slice' || kind === 'lob' ? 0.35 : 1);
     const fS = 0.92 + 0.08 * snap.stamina;
     let fT;
     if (at <= win.T_PERFECT) fT = 1;
@@ -911,53 +1045,66 @@ export class ArcadeSim {
     else fT = 0.88 - 0.4 * clamp((at - K.T_FULL) / (K.T_MISS - K.T_FULL), 0, 1);
     const fGp = Math.max(0.15, 1 - K.PRESSURE_Q * Math.max(0, (p.incomingGp || 0) - 0.3) / 0.7);     // cramped by a deep / wide / fast incoming ball
     const fLate = loc.fwd >= K.FWD_CLEAN ? 1 : 1 - 0.55 * clamp((K.FWD_CLEAN - loc.fwd) / (K.FWD_CLEAN - K.FWD_WHIFF), 0, 1);   // contact far behind the ideal point (late swing)
-    let q = clamp(fGp * fLate * (0.1 + 0.9 * setv) * fPace * fH * fS * fT, 0, 1);
+    let q = clamp(fGp * fLate * (0.1 + 0.9 * setv) * fPace * fH * fS * fT * fSpin, 0, 1);
     const mishit = label === 'wide' ? 'wide' : (loc.fwd < K.FWD_CLEAN ? 'frame' : (reachT > 0.8 ? 'stretch' : null));
-    // ---- target
-    const dirT = clamp(t / K.T_FULL, -1.7, 1.7);
-    const sgnS = (plan.side === 'fh' ? 1 : -1) * p.handX;
-    const aim = dirT * sgnS;
-    let tx = K.aimToX(aim);
+    // ---- shot spec: type, pace, spin, depth
     const power = sw.power;
-    const opp = 1 - p.i;
     const fOpp = -p.facing;                                   // sign of the opponent's half (z)
-    let shotName = kind, params, tz, sol, top;
+    let shotName = kind, params, tz, top, speed, clear, elevation, kindKey;
     const isDrop = (kind === 'slice' || kind === 'volley') && power <= DROP_POWER;
+    const sideF = (side === 'fh' ? K.FH_POWER : K.BH_POWER) * K.ballSpeedScale;
+    const topF = (side === 'fh' ? 1.10 : 1.0) * (reachT > 0.6 ? 0.8 : 1) * K.spinScale;
     if (kind === 'lob') {
       params = strokeParams('topspin', 0.4);
       tz = fOpp * (HALF - lerp(2.6, 1.3, power));
-      top = 1100 * Math.PI / 30;
-      const el = lerp(LOB_EL[0], LOB_EL[1], power);
-      sol = solveLaunch({ pos: B.pos, target: { x: tx * 0.85, z: tz }, speed: 20, top, surface: this.surface, elevation: el });
-      tx *= 0.85;
+      top = 1100 * RPM_ * topF;
+      elevation = lerp(LOB_EL[0], LOB_EL[1], power);
+      speed = 20; clear = 0.2; kindKey = 'lob';
     } else {
       const key = kind === 'smash' ? 'smash' : kind === 'volley' ? 'volley' : STROKES[kind] ? kind : 'topspin';
       params = strokeParams(key, power);
-      top = params.top;
+      top = params.top * (params.top > 0 ? topF : 1);
+      clear = params.clear; kindKey = key;
       if (isDrop) {
         const dd = lerp(1.7, 3.4, power / DROP_POWER);
-        tz = fOpp * dd; tx *= 0.7;
+        tz = fOpp * dd;
         params.speed = lerp(9, 15, power / DROP_POWER);
-        params.clear = 0.2;
-        top = -2500 * Math.PI / 30;
+        clear = 0.2;
+        top = -2500 * RPM_;
         shotName = kind === 'volley' ? 'volley' : 'slice';
+        kindKey = 'slice';
       } else {
         tz = fOpp * (HALF - params.mIn);
         shotName = key;
       }
-      let speed = params.speed * (0.8 + 0.2 * q);
+      speed = params.speed * (0.8 + 0.2 * q) * (isDrop ? 1 : sideF);
       if (!isDrop) speed += (kind === 'volley' ? 0.26 : 0.1) * Math.max(0, vIn - 12);
       if (label === 'wide') speed *= 1 - 0.2 * uW;
       speed = Math.max(speed, 8);
-      if (kind === 'volley' && setv >= 0.8 && !isDrop) tx = clamp(tx * 1.25, -3.95, 3.95);      // a set volley opens sharper angles
-      sol = solveLaunch({ pos: B.pos, target: { x: tx, z: tz }, speed, top, surface: this.surface, clear: params.clear });
     }
+    // ---- direction from the contact point (section 3.2)
+    const parts = this._psiParts(side, loc, t);
+    let psi = parts.psi;
+    if (kind === 'volley' && setv >= 0.8 && !isDrop) psi = clamp(psi * 1.2, -K.PSI_MAX, K.PSI_MAX);    // a set volley opens sharper angles
+    const tg = this._targetFromPsi(p, side, B.pos, psi, tz);
+    let tx = clamp(tg.x, -K.TX_MAX, K.TX_MAX);
+    if (kind === 'lob') tx = clamp(tx, -K.TX_MAX, K.TX_MAX) * 0.9;
+    if (isDrop) tx *= 0.8;
+    const aim = clamp(tx / K.AIM_X, -1, 1);
+    const sideW = this._sideSpin(p, kindKey, psi, power) * (isDrop ? 0.4 : 1);
+    const spec = { pos: B.pos, target: { x: tx, z: tz }, speed, top, side: sideW, surface: this.surface, clear, tune: this.ft };
+    if (elevation !== undefined) spec.elevation = elevation;
+    const sol = solveLaunch(spec);
+    // ---- direction-change risk: reply against a fast ball along a different line (classic rule: rally cross-court)
+    const cosA = clamp((-B.vel.x * sol.hx - B.vel.z * sol.hz) / vInH, -1, 1);
+    const dirChange = Math.acos(cosA) * 180 / Math.PI;
+    const dirK = 1 + K.DIR_CHANGE_K * Math.pow(clamp(dirChange / 45, 0, 1.6), 0.8) * clamp(vInH / 30, 0.4, 1.3);
     // ---- scatter
     const edge = clamp(1 - Math.min(COURT.singlesHalfWidth - Math.abs(tx), isDrop ? 3 : Math.abs(tz) > 0 ? HALF - Math.abs(tz) : 3) / 2.2, 0, 1);
     // threading a passing shot past a set net player is hard (lobs are the answer); a net player caught in transit is not a problem
     const oppP = this.P[1 - p.i];
     const netPres = (kind !== 'lob' && (oppP.zone === 'net' || (oppP.zone === 'toNet' && Math.abs(oppP.pos.z) < 7.5))) ? 1 + K.NET_PRESSURE * Math.pow(oppP.set, 2) : 1;
-    const pw = (0.72 + 0.56 * power) * netPres;
+    const pw = (0.72 + 0.56 * power) * netPres * dirK * K.SCATTER;
     const kScale = kind === 'smash' ? 1.15 : kind === 'volley' ? 0.5 + 3.2 * (1 - setv) : kind === 'lob' ? 0.9 : 1;
     const sd = (0.16 + 1.9 * Math.pow(1 - q, 1.3)) * pw * (1 + 0.45 * edge) * kScale + (label === 'wide' ? 0.9 * uW : 0);
     const sl = (0.2 + 2.2 * Math.pow(1 - q, 1.3)) * pw * (1 + 1.5 * edge) * kScale + (label === 'wide' ? 0.7 * uW : 0);
@@ -975,9 +1122,14 @@ export class ArcadeSim {
       returned: true, boxSign: 0, recvInfeasible: false,
     };
     const speedKmh = Math.hypot(sc.vel.x, sc.vel.y, sc.vel.z) * KMH;
+    const contact = { fwd: loc.fwd, lat: loc.lat, h: B.pos.y };
+    const extra = {
+      topRpm: top / RPM_, sideRpm: sideW / RPM_, curveM: sol.curveM, contact, face: psi, dirChange, dirK, netClear: sol.netClear,
+      bounceApex: sol.landVy !== undefined ? 0.0335 + sol.landVy * sol.landVy / (2 * G) : null, psi: parts,
+    };
     const shot = {
-      by: p.i, shot: shotName, side: plan.side, timing: label, timingMs: Math.round(t * 1000), dir: clamp(t / K.T_FULL, -1, 1), aim: clamp(aim, -1, 1),
-      power, quality: q, setv, pressure: setv * fPace, speedKmh, spinRpm: Math.abs(top) * 30 / Math.PI, target: { x: tx, z: tz }, mishit,
+      by: p.i, shot: shotName, side, timing: label, timingMs: Math.round(t * 1000), dir: clamp(t / K.T_FULL, -1, 1), aim,
+      power, quality: q, setv, pressure: setv * fPace, speedKmh, spinRpm: Math.abs(top) / RPM_, target: { x: tx, z: tz }, mishit, ...extra,
     };
     this.lastShot = shot;
     p.lastQ = q; p.lastSet = setv;
@@ -985,13 +1137,12 @@ export class ArcadeSim {
     p.sw.contact = { lat: loc.lat, fwd: loc.fwd, h: B.pos.y };
     if (kind === 'smash') { p.vy = 3.4; }
     this.emit({
-      type: 'hit', by: p.i, shot: shotName, side: plan.side, timing: label, timingMs: shot.timingMs, dir: shot.dir, aim: shot.aim, power, quality: q, setv,
-      speedKmh, pos: { x: B.pos.x, y: B.pos.y, z: B.pos.z }, mishit,
+      type: 'hit', by: p.i, shot: shotName, side, timing: label, timingMs: shot.timingMs, dir: shot.dir, aim: shot.aim, power, quality: q, setv,
+      speedKmh, pos: { x: B.pos.x, y: B.pos.y, z: B.pos.z }, mishit, ...extra,
     });
     const now = this.time;
     if (now - tb > 1e-6) this._catchUp(now - tb);
     if (Math.abs(snap.pos.z) <= K.NET_ARRIVE + 0.5) p.netThisPoint = true;
-    if (Math.abs(snap.pos.z) > 9.2 && p.wantNet && !p.human) { /* AI manages its own net state */ }
     if (Math.abs(snap.pos.z) > HALF - 0.3 && p.wantNet) this._setNet(p, false);
     p.deep = Math.abs(snap.pos.z) > K.BASE_Z + 0.8 && q < 0.6;
     p.plan = null;
@@ -1011,29 +1162,29 @@ export class ArcadeSim {
     let target = null, vcap = this._vmaxOf(p), kind = 'idle', arriveBy = 0;
     const live = ph === 'rally';
     if (ph === 'serve-prep' || ph === 'serving') {
-      if (p.walkTo) { target = p.walkTo; vcap = K.WALK_SPEED; kind = 'walk'; }
+      if (p.walkTo) { target = p.walkTo; vcap = this.K.WALK_SPEED; kind = 'walk'; }
     } else if (ph === 'point-over' || ph === 'changeover') {
-      if (p.walkTo && !p.walkAt) { target = p.walkTo; vcap = K.WALK_SPEED; kind = 'walk'; }
+      if (p.walkTo && !p.walkAt) { target = p.walkTo; vcap = this.K.WALK_SPEED; kind = 'walk'; }
     } else if (live) {
       const pl = p.plan;
       if (pl && !pl.expired) {
-        if (time >= p.reactUntil) { target = pl.stand; arriveBy = pl.tContact - K.SETUP_TIME; kind = 'chase'; }
+        if (time >= p.reactUntil) { target = pl.stand; arriveBy = pl.tContact - this.K.SETUP_TIME; kind = 'chase'; }
         if (time > pl.tContact && !pl.swing) { target = this._standFor(p, pl.side, this.b.pos, pl.kind); arriveBy = 0; vcap *= 1.15; kind = 'chase'; }
       } else {
         target = p.recover; kind = 'recover';
-        if (p.zone === 'toNet') vcap = K.RUSH_VMAX; else if (p.zone === 'toBase') vcap = this._vmaxOf(p) * 0.92; else vcap *= 0.7;
+        if (p.zone === 'toNet') vcap = this.K.RUSH_VMAX; else if (p.zone === 'toBase') vcap = this._vmaxOf(p) * 0.92; else vcap *= 0.7;
         if (p.zone === 'toNet' || p.zone === 'net') { p.recover = this._home(p); target = p.recover; }
       }
-      if (p.zone === 'toNet' && kind === 'chase') vcap = Math.max(vcap, K.RUSH_VMAX * 0.95);
+      if (p.zone === 'toNet' && kind === 'chase') vcap = Math.max(vcap, this.K.RUSH_VMAX * 0.95);
     }
     // ---- zone transitions
     const az = Math.abs(p.pos.z);
-    if (p.zone === 'toNet' && az <= K.NET_ARRIVE) this._zone(p, 'net');
+    if (p.zone === 'toNet' && az <= this.K.NET_ARRIVE) this._zone(p, 'net');
     else if (p.zone === 'toBase' && az >= HALF - 1.2) this._zone(p, 'base');
     // ---- serve jump: leaves the ground ~0.16 s before the ideal contact, steps into the court, lands ~0.3 s after it
     if (p.serveJump) {
       const sj = p.serveJump, tau = time - sj.t0;
-      const L = K.SERVE.jumpLead, vJ = (K.SERVE.jumpY + 0.5 * G * L * L) / L;
+      const L = this.K.SERVE.jumpLead, vJ = (this.K.SERVE.jumpY + 0.5 * G * L * L) / L;
       if (tau > 2 * vJ / G + 0.02) { p.serveJump = null; p.y = 0; p.vy = 0; p.vel.z = 0; }
       else if (tau >= 0) {
         const z1 = sj.z0 - p.facing * this._serveStep(tau);
@@ -1048,20 +1199,20 @@ export class ArcadeSim {
     if (target) {
       dx = target.x - p.pos.x; dz = target.z - p.pos.z; dist = Math.hypot(dx, dz);
       if (dist > 1e-4) {
-        let vd = Math.min(vcap, Math.sqrt(2 * K.DEC * 0.85 * Math.max(dist - 0.02, 0)));
+        let vd = Math.min(vcap, Math.sqrt(2 * this.K.DEC * 0.85 * Math.max(dist - 0.02, 0)));
         if (arriveBy) {
           const tl = arriveBy - time;
           if (tl > 0.03) vd = Math.min(vd, Math.max(1.25 * dist / tl, 0.9));
         }
         let ux = dx / dist, uz = dz / dist;
         let vx = ux * vd, vz = uz * vd;
-        if (p.zone === 'net') vx *= K.NET_LATERAL;
+        if (p.zone === 'net') vx *= this.K.NET_LATERAL;
         dvx = vx; dvz = vz;
       }
     }
     const curS = Math.hypot(p.vel.x, p.vel.z);
     const desS = Math.hypot(dvx, dvz);
-    const lim = (desS < curS ? K.DEC : (p.zone === 'toNet' ? K.RUSH_ACC : K.ACC)) * h;
+    const lim = (desS < curS ? this.K.DEC : (p.zone === 'toNet' ? this.K.RUSH_ACC : this.K.ACC)) * h;
     let ex = dvx - p.vel.x, ez = dvz - p.vel.z;
     const em = Math.hypot(ex, ez);
     if (em > lim) { ex *= lim / em; ez *= lim / em; }
@@ -1077,9 +1228,9 @@ export class ArcadeSim {
     // jump (smash / serve)
     if (!p.serveJump && (p.vy !== 0 || p.y > 0)) { p.vy -= G * h; p.y += p.vy * h; if (p.y <= 0) { p.y = 0; p.vy = 0; } }
     // ---- stamina
-    const r = sp / K.VMAX;
-    if (live && sp > 1) p.stamina = clamp(p.stamina - (K.STAMINA.drain * Math.max(0, r - 0.45) * 1.8 + K.STAMINA.jog * r) * h, 0, 1);
-    else p.stamina = clamp(p.stamina + (live ? K.STAMINA.rest : K.STAMINA.between * 0.3) * h, 0, 1);
+    const r = sp / this.K.VMAX;
+    if (live && sp > 1) p.stamina = clamp(p.stamina - (this.K.STAMINA.drain * Math.max(0, r - 0.45) * 1.8 + this.K.STAMINA.jog * r) * h, 0, 1);
+    else p.stamina = clamp(p.stamina + (live ? this.K.STAMINA.rest : this.K.STAMINA.between * 0.3) * h, 0, 1);
     // ---- set (settled-ness)
     if (live && p.plan && !p.plan.expired) {
       const rd = Math.hypot(p.pos.x - p.plan.standTrue.x, p.pos.z - p.plan.standTrue.z);
@@ -1092,7 +1243,7 @@ export class ArcadeSim {
     const a = p.anim;
     const acc = (sp - p.prevSpeed) / h;
     p.prevSpeed = sp;
-    p.accel = p.accel * 0.85 + clamp(acc / K.ACC, -1, 1) * 0.15;
+    p.accel = p.accel * 0.85 + clamp(acc / this.K.ACC, -1, 1) * 0.15;
     // direction / face
     if (sp > 0.3) { p.dirv.x = p.vel.x / sp; p.dirv.z = p.vel.z / sp; }
     const fwdZ = -p.facing;
@@ -1109,7 +1260,7 @@ export class ArcadeSim {
     p.faceAng += clamp(d, -maxTurn, maxTurn);
     a.face.x = Math.sin(p.faceAng); a.face.z = Math.cos(p.faceAng);
     a.dir.x = p.dirv.x; a.dir.z = p.dirv.z;
-    a.speed = clamp(sp / K.VMAX, 0, 1.2);
+    a.speed = clamp(sp / this.K.VMAX, 0, 1.2);
     a.accel = clamp(p.accel, -1, 1);
     // gait advances with distance
     const stride = sp < 0.2 ? 0.5 : lerp(0.45, 1.65, clamp((sp - 0.4) / 5.4, 0, 1));
@@ -1184,6 +1335,7 @@ export class ArcadeSim {
       const p = this.P[i], sp = s.players[i];
       sp.lagMs = p.lagMs; sp.y = p.y; sp.zone = p.zone; sp.stamina = p.stamina; sp.set = p.set;
       sp.racketTip = this._racketTip(p);
+      sp.plan = p.plan && !p.plan.expired ? p.plan.pub : null;
     }
     const sm = s.match;
     sm.phase = this.phase; sm.server = m.server; sm.serveCourt = m.serveCourt; sm.faultCount = this.faultCount;
@@ -1195,6 +1347,7 @@ export class ArcadeSim {
     const hi = this.humanIdx < 0 ? 0 : this.humanIdx, hp = this.P[hi], H_ = s.hint;
     H_.i = hi; H_.contactIn = null; H_.canServe = false; H_.tossUp = false; H_.text = '';
     H_.side = hp.plan ? hp.plan.side : (hp.anim.side || 'fh');
+    H_.sideLocked = hp.plan ? !!hp.plan.sideLocked : false;
     if (this.phase === 'serving' && m.server === hi) {
       if (this.sv.stage === 'wait') { H_.canServe = true; H_.text = '挥拍抛球'; }
       else if (this.sv.stage === 'raise') { H_.tossUp = true; H_.canServe = true; H_.contactIn = Math.max(0, (this.sv.tIdeal - this._lagSim(hp) - this.time) / this.timeScale); H_.text = '球到最高点时挥拍'; }
@@ -1219,5 +1372,4 @@ export class ArcadeSim {
   }
 }
 
-function BASE_Z() { return K.BASE_Z; }
 function p_handX(p) { return p.handX; }

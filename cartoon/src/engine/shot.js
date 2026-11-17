@@ -1,6 +1,6 @@
 // Shot model: stroke table, launch solver (shooting method on simulateTrajectory) and scatter. DOM-free, pure.
 import { COURT } from '../../../src/config.js';
-import { simulateTrajectory, makeSpin } from '../../../src/physics/ball.js';
+import { simulateTrajectory, makeSpin } from './flight.js';
 
 const RPM = Math.PI / 30;
 const KMH = 1 / 3.6;
@@ -37,71 +37,96 @@ export function strokeParams(kind, power) {
   };
 }
 
-function fly(pos, v, el, hx, hz, top, surface, dt = SOLVE_DT) {
+function fly(pos, v, el, hx, hz, top, side, surface, tune, dt = SOLVE_DT, path = false) {
   const ce = Math.cos(el);
   return simulateTrajectory(
-    { pos, vel: { x: v * ce * hx, y: v * Math.sin(el), z: v * ce * hz }, spin: makeSpin(hx, hz, top) },
-    { surface, dt, stopAfterBounces: 1, maxTime: 4.5 },
+    { pos, vel: { x: v * ce * hx, y: v * Math.sin(el), z: v * ce * hz }, spin: makeSpin(hx, hz, top, side) },
+    { surface, dt, stopAfterBounces: 1, maxTime: 4.5, tuning: tune, path, pathDt: 1 / 30 },
   );
 }
-const rangeOf = (r, pos, hx, hz) => {
-  const p = r.landing || r.end.pos;
-  return (p.x - pos.x) * hx + (p.z - pos.z) * hz;
-};
+/** Radial distance of the first bounce from the launch point (m); short flights that never bounce count as 0. */
+const radial = (r, pos) => { const p = r.landing || r.end.pos; return Math.hypot(p.x - pos.x, p.z - pos.z); };
 
 /**
- * Solve a launch so that the first bounce lands at `target`.
- * spec: {pos, target:{x,z}, speed (m/s), top (rad/s), surface, clear, elevation?(rad: fixed elevation, solves speed)}
- * returns {vel, spin, speed, el, hx, hz, D, slope (m of range per rad of elevation, or per m/s for fixedEl),
- *          landing, netClear, ok}
+ * 2-D shooting solver: find elevation (depth) AND azimuth (lateral) so that the first bounce lands at `target` even though
+ * sidespin / Magnus bend the flight (the launch line starts off the target and the ball bends in).
+ * spec: {pos, target:{x,z}, speed (m/s), top (rad/s), side? (rad/s about the vertical axis), surface, clear, tune?, elevation?(rad: fixed elevation, solves speed)}
+ * returns {vel, spin, speed, el, hx, hz, az, D, slope, slopeV, side, landing, netClear, curveM, ok}
  */
 export function solveLaunch(spec) {
   const { pos, target, top, surface } = spec;
+  const side = spec.side || 0, tune = spec.tune || null;
   const dx = target.x - pos.x, dz = target.z - pos.z;
   const D = Math.hypot(dx, dz) || 1;
-  const hx = dx / D, hz = dz / D;
+  const h0x = dx / D, h0z = dz / D;
   const clear = spec.clear ?? 0.15;
-  let v = Math.max(5, spec.speed), el = 0, r, slope = 60, slopeV = 1;
-  if (spec.elevation !== undefined) {
-    // lob: fixed elevation, bisect speed
-    el = spec.elevation;
-    let lo = 6, hi = 40;
-    for (let i = 0; i < 11; i++) {
-      const mid = 0.5 * (lo + hi);
-      if (rangeOf(fly(pos, mid, el, hx, hz, top, surface), pos, hx, hz) < D) lo = mid; else hi = mid;
-    }
-    v = hi;
-    r = fly(pos, v, el, hx, hz, top, surface);
-    const r2 = fly(pos, v + 0.4, el, hx, hz, top, surface);
-    slope = Math.max(0.5, (rangeOf(r2, pos, hx, hz) - rangeOf(r, pos, hx, hz)) / 0.4);
-  } else {
-    const elLo = -0.9, elHi = 0.72;
-    for (let attempt = 0; attempt < 16; attempt++) {
-      // enough range at the highest elevation?
-      if (rangeOf(fly(pos, v, elHi, hx, hz, top, surface), pos, hx, hz) < D) { v *= 1.15; continue; }
-      let lo = elLo, hi = elHi;
-      for (let i = 0; i < 11; i++) {
+  const dirAt = (az) => { const c = Math.cos(az), s = Math.sin(az); return [h0x * c - h0z * s, h0x * s + h0z * c]; };
+  const fixedEl = spec.elevation !== undefined;
+  let v = Math.max(5, spec.speed), el = fixedEl ? spec.elevation : 0, az = 0, r, hx = h0x, hz = h0z, slope = 60, slopeV = 1;
+  // solve the free variable (elevation, or speed for a lob) so that the bounce is at radial distance D along the launch azimuth
+  const solveRange = (wide) => {
+    [hx, hz] = dirAt(az);
+    if (fixedEl) {
+      let lo = wide ? 6 : v * 0.8, hi = wide ? 40 : v * 1.25;
+      for (let i = 0; i < (wide ? 11 : 7); i++) {
         const mid = 0.5 * (lo + hi);
-        if (rangeOf(fly(pos, v, mid, hx, hz, top, surface), pos, hx, hz) < D) lo = mid; else hi = mid;
+        if (radial(fly(pos, mid, el, hx, hz, top, side, surface, tune), pos) < D) lo = mid; else hi = mid;
+      }
+      v = hi;
+    } else {
+      let lo = wide ? -0.9 : el - 0.07, hi = wide ? 0.72 : el + 0.07;
+      if (!wide && (radial(fly(pos, v, hi, hx, hz, top, side, surface, tune), pos) < D || radial(fly(pos, v, lo, hx, hz, top, side, surface, tune), pos) > D)) { lo = -0.9; hi = 0.72; }
+      for (let i = 0; i < (wide ? 11 : 8); i++) {
+        const mid = 0.5 * (lo + hi);
+        if (radial(fly(pos, v, mid, hx, hz, top, side, surface, tune), pos) < D) lo = mid; else hi = mid;
       }
       el = hi;
-      r = fly(pos, v, el, hx, hz, top, surface);
-      if (!r.hitNet && (r.netClear === null || r.netClear >= clear)) break;
-      v *= attempt < 5 ? 0.93 : 0.86;
-      if (v < 6) break;
     }
-    const r2 = fly(pos, v, el + 0.01, hx, hz, top, surface);
-    slope = Math.max(15, (rangeOf(r2, pos, hx, hz) - rangeOf(r, pos, hx, hz)) / 0.01);
-    const r3 = fly(pos, v + 0.5, el, hx, hz, top, surface);
-    slopeV = Math.max(0.3, (rangeOf(r3, pos, hx, hz) - rangeOf(r, pos, hx, hz)) / 0.5);
+    r = fly(pos, v, el, hx, hz, top, side, surface, tune);
+  };
+  const crossAngle = () => {
+    const p = r.landing || r.end.pos, ex = p.x - pos.x, ez = p.z - pos.z;
+    return Math.atan2(h0x * ez - h0z * ex, h0x * ex + h0z * ez);           // angle of the landing direction relative to the target line
+  };
+  for (let attempt = 0; attempt < 16; attempt++) {
+    if (!fixedEl && radial(fly(pos, v, 0.72, ...dirAt(az), top, side, surface, tune), pos) < D) { v *= 1.15; continue; }
+    solveRange(true);
+    for (let k = 0; k < 3; k++) {
+      const phi = crossAngle();
+      if (Math.abs(phi) * D < 0.03) break;
+      az -= phi * 0.95;
+      solveRange(false);
+    }
+    if (fixedEl || (!r.hitNet && (r.netClear === null || r.netClear >= clear))) break;
+    v *= attempt < 5 ? 0.93 : 0.86;
+    if (v < 6) break;
+  }
+  [hx, hz] = dirAt(az);
+  if (fixedEl) {
+    const r2 = fly(pos, v + 0.4, el, hx, hz, top, side, surface, tune);
+    slope = Math.max(0.5, (radial(r2, pos) - radial(r, pos)) / 0.4);
+  } else {
+    const r2 = fly(pos, v, el + 0.01, hx, hz, top, side, surface, tune);
+    slope = Math.max(15, (radial(r2, pos) - radial(r, pos)) / 0.01);
+    const r3 = fly(pos, v + 0.5, el, hx, hz, top, side, surface, tune);
+    slopeV = Math.max(0.3, (radial(r3, pos) - radial(r, pos)) / 0.5);
+  }
+  // maximum lateral deviation of the real flight from the straight launch line (signed, + = toward +x)
+  let curveM = 0;
+  if (side !== 0 || tune) {
+    const rp = fly(pos, v, el, hx, hz, top, side, surface, tune, SOLVE_DT, true);
+    for (const q of rp.path) {
+      const d = -(q.x - pos.x) * hz + (q.z - pos.z) * hx;                   // lateral offset from the line along perp = (-hz, hx) (= +x for travel toward -z)
+      if (Math.abs(d) > Math.abs(curveM)) curveM = d;
+    }
   }
   const ce = Math.cos(el);
   return {
     vel: { x: v * ce * hx, y: v * Math.sin(el), z: v * ce * hz },
-    spin: makeSpin(hx, hz, top), speed: v, el, hx, hz, D, slope, slopeV, top,
-    fixedEl: spec.elevation !== undefined,
+    spin: makeSpin(hx, hz, top, side), speed: v, el, hx, hz, az, D, slope, slopeV, top, side, tune,
+    fixedEl,
     landing: r.landing ? { x: r.landing.x, z: r.landing.z } : null,
-    netClear: r.netClear, hitNet: r.hitNet,
+    netClear: r.netClear, hitNet: r.hitNet, curveM, landVy: r.landing ? r.landing.vy : undefined,
     ok: !!r.landing && !r.hitNet,
   };
 }
@@ -127,7 +152,7 @@ export function scatterLaunch(sol, sigmaDepth, sigmaLat, rng, sigmaClear = 0) {
   const ce = Math.cos(el);
   return {
     vel: { x: v * ce * hx, y: v * Math.sin(el), z: v * ce * hz },
-    spin: makeSpin(hx, hz, sol.top), speed: v, el, hx, hz,
+    spin: makeSpin(hx, hz, sol.top, sol.side || 0), speed: v, el, hx, hz,
   };
 }
 

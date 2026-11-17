@@ -1,10 +1,10 @@
 // Tunable constants of the arcade simulation (all times in SIM seconds unless noted, lengths in metres).
 
 // ---- timing -> direction (ARCADE.md 2.2). t = swingTime - idealContactTime.
-export const T_FULL = 0.140;        // |t| >= T_FULL => full lateral aim (|dir| = 1)
-export const T_MISS = 0.240;        // |t| beyond => whiff; between T_FULL and T_MISS = dragged wide, weak mishit
-export const T_PERFECT = 0.028;     // |t| <= this is labelled 'perfect'
-export const REMOTE = { T_MISS: 0.275, T_PERFECT: 0.036 };   // a little more forgiving (latency jitter)
+export const T_FULL = 0.150;        // |t| >= T_FULL => full lateral aim (|dir| = 1)
+export const T_MISS = 0.260;        // |t| beyond => whiff; between T_FULL and T_MISS = dragged wide, weak mishit
+export const T_PERFECT = 0.035;     // |t| <= this is labelled 'perfect'
+export const REMOTE = { T_MISS: 0.295, T_PERFECT: 0.045 };   // a little more forgiving (latency jitter)
 export const AIM_X = 3.45;          // lateral target (m) at |dir| = 1 (sidelines are at 4.115)
 export const AIM_WIDE = 3.4;        // extra metres of drag at |dir| = 1.7 (T_MISS)
 
@@ -25,6 +25,7 @@ export const NET_LATERAL = 0.65;     // lateral speed factor at the net (covers 
 // ---- contact geometry
 export const IDEAL_LAT = { fh: 0.85, bh: 0.72 };
 export const IDEAL_FWD = 0.90;
+export const IDEAL_LAT_V = 0.80;
 export const REACH = { fh: 1.32, bh: 1.18 };
 export const LUNGE = 0.30;
 export const REACH_Y = 2.35;
@@ -70,3 +71,63 @@ export const PRESSURE_NET = 9.5;       // multiplier of both pressure effects wh
 // ---- how far behind the hip line a ball can still be struck (fwd < 0 = behind the body)
 export const FWD_CLEAN = -0.5;     // cleanly struck down to here
 export const FWD_WHIFF = -1.5;     // between CLEAN and WHIFF = weak frame shot (mishit 'frame'); beyond = whiff reason 'late'
+
+// =================================================================== ENGINE v2 additions (docs/ENGINE2.md section 7)
+// Every tunable lives in one flat object (see DEFAULTS); each sim owns a copy (sim.K) that setTuning() mutates live.
+// -- flight physics (flight.js)
+export const LIFT_GAIN = 1.8, KICK_GAIN = 1.6, SKID_GAIN = 1.4, SIDE_KICK = 0.5;
+export const SIDE_SCALE = 1.0, SPIN_SCALE = 1.0, BALL_SPEED_SCALE = 1.0;
+// -- contact point -> face yaw psi (deg; + = pulled across the body): psi = G_T*clamp(-t/T_FULL) + G_F*(fwd-FWD_IDEAL) + G_L*(lat-LAT_IDEAL)
+export const G_T = 10.5, G_F = 4.0, G_L = 3.0, PSI_MAX = 55;
+export const PSI_T_CLAMP = 1.7;
+// -- sidespin: sideRpm = S_type * (k0 + k1 * |psi| / 30deg) (rpm, signed by stroke/hand in arcade.js)
+export const SIDE_RPM = { topspin: 1150, flat: 450, slice: 1350, lob: 700, volley: 500, smash: 300 };
+export const SIDE_K0 = 0.55, SIDE_K1 = 0.55;
+// -- errors / quality
+export const SCATTER = 1.0;                 // global scale of the landing scatter
+export const DIR_CHANGE_K = 1.3;            // scatter multiplier = 1 + K * (angle/45deg)^0.8 * clamp(vIn/30, .4, 1.3)
+export const SPIN_IN_K = 0.5;               // quality loss from heavy incoming topspin kick above the shoulder
+// -- movement
+export const JERK = 60;                     // m/s^3 (acceleration slew)
+export const REACT = HUMAN_REACTION;        // alias (live: sim.K.HUMAN_REACTION is used)
+export const SETTLE = 0.18;                 // wanted time standing still before contact (alias of SETUP_TIME)
+export const AGGRESSION = 0.5;              // 0 = drop back / safe, 1 = step in and take it on the rise
+
+// -- side choice / intercept
+export const FH_PREF = 0.30, RUN_AROUND = 1.2, RUN_SPARE = 0.25;   // forehand tie-break (m), run-around window (m), required spare time (s)
+export const Z_BACK = 13.7, Z_FRONT = 11.0, MARGIN_MIN = 0.12;       // preferred contact depth for aggression 0 / 1, min comfortable margin (s)
+export const PACE_PEN_FH = 0.014, PACE_PEN_BH = 0.011;               // quality loss per m/s of incoming speed above 22 (bh steadier)
+export const FH_POWER = 1.04, BH_POWER = 0.97, TX_MAX = 7.5;
+
+export const LOCK_TIME = 0.45;                                       // side is locked this long before contact
+
+export const DEFAULTS = {};
+for (const k of ['LIFT_GAIN', 'KICK_GAIN', 'SKID_GAIN', 'SIDE_KICK', 'SIDE_SCALE', 'SPIN_SCALE', 'BALL_SPEED_SCALE']) {
+  const camel = k.toLowerCase().replace(/_([a-z])/g, (m, c) => c.toUpperCase());
+  DEFAULTS[camel] = { LIFT_GAIN, KICK_GAIN, SKID_GAIN, SIDE_KICK, SIDE_SCALE, SPIN_SCALE, BALL_SPEED_SCALE }[k];
+}
+Object.assign(DEFAULTS, { timeScale: 0.8 });
+
+/** Names accepted by setTuning in addition to the exported constants of this module (camelCase physics gains + timeScale). */
+export function makeK(overrides = {}) {
+  const K = {};
+  for (const [k, v] of Object.entries(MODULE)) K[k] = (v && typeof v === 'object') ? { ...v } : v;
+  Object.assign(K, DEFAULTS);
+  K.SETUP_TIME = SETTLE;
+  applyTuning(K, overrides);
+  return K;
+}
+/** Merge `t` into K (nested objects are merged one level deep). Unknown keys are accepted (the lab may add its own). */
+export function applyTuning(K, t) {
+  for (const [k, v] of Object.entries(t || {})) {
+    if (v && typeof v === 'object' && !Array.isArray(v) && K[k] && typeof K[k] === 'object') Object.assign(K[k], v);
+    else K[k] = v;
+    if (k === 'SETTLE') K.SETUP_TIME = v;
+    if (k === 'REACT') K.HUMAN_REACTION = v;
+    if (k === 'SETUP_TIME') K.SETTLE = v;
+    if (k === 'HUMAN_REACTION') K.REACT = v;
+  }
+  return K;
+}
+import * as MODULE_NS from './tuning.js';
+const { makeK: _a, applyTuning: _b, DEFAULTS: _c, ...MODULE } = MODULE_NS;

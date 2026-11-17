@@ -1,7 +1,6 @@
 // AI opponent. It plays by the same rules as the human: it only calls sim.swing() (with a chosen timing offset =
 // intended direction + Gaussian timing error that depends on the level) and sim.setNet(). Movement, reach, stamina,
 // reaction delay are the shared sim rules (the AI only gets its own reaction time / anticipation noise).
-import * as K from './tuning.js';
 import { clamp, lerp } from './shot.js';
 
 /** Style parameters. approach: chance to go to the net after a short ball; drop/lob: preferences; pow: base power. */
@@ -105,7 +104,7 @@ export class AIBrain {
     const open = (strength = 1) => {
       let s = Math.abs(oppX) < 0.9 ? (r.chance(0.5) ? 1 : -1) : -sgn(oppX);
       if (Math.abs(oppX) < 0.9 && Math.abs(P.x) > 1.5) s = -sgn(P.x);
-      return s * this.aimMax * K.AIM_X * strength;
+      return s * this.aimMax * sim.K.AIM_X * strength;
     };
     let shot = 'topspin', power = S.pow, aimX = 0, net = null;
 
@@ -132,7 +131,7 @@ export class AIBrain {
       shot = 'slice'; power = r.range(0.06, 0.22); aimX = open(0.5);
     } else {
       // construct the point: work the open court, stretch the opponent, finish when he is out of position
-      const corner = clamp(this.aimMax * K.AIM_X, 0, 3.4);
+      const corner = clamp(this.aimMax * sim.K.AIM_X, 0, 3.4);
       const stretched = Math.abs(oppX) > 1.9 || (opp.zone !== 'base' && !oppNet);
       let side, mag;
       if (Math.abs(oppX) > 1.1) {
@@ -157,8 +156,8 @@ export class AIBrain {
     else if (p.wantNet && pressure > 0.8 && Math.abs(P.z) > 8) sim.setNet(this.i, false);
     const sig = this.sigmaT * (1 + 1.1 * pressure) * (1 + clamp((pl.inSpeed - 25) / 45, 0, 0.4));
     // do not aim so close to the edge of the timing window that ordinary timing error drags the ball wide
-    const dirCap = clamp((K.T_FULL - 1.6 * sig) / K.T_FULL, 0.3, 1);
-    aimX = clamp(aimX, -K.aimToX(dirCap), K.aimToX(dirCap));
+    const dirCap = clamp((sim.K.T_FULL - 1.6 * sig) / sim.K.T_FULL, 0.3, 1);
+    aimX = clamp(aimX, -sim.K.aimToX(dirCap), sim.K.aimToX(dirCap));
     const offset = sim.timingForAim(this.i, aimX) / 1000 + r.gauss(0, sig);
     return { shot, power, offset, aimX };
   }
